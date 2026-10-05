@@ -26,9 +26,9 @@ jobs:
       run:
         working-directory: infra/terraform
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.10.5"
 
@@ -54,10 +54,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 막는 것(권고): 안 쓰는 선언, 죽은 코드, 잘못된 인스턴스 타입 문자열, deprecated 문법 등.
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v6
         continue-on-error: true
       - name: tflint run
         continue-on-error: true
@@ -85,7 +85,7 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 막는 것: deploy.yml/infra-ci.yml 의 잘못된 표현식·존재하지 않는 컨텍스트·YAML 구조 오류.
       - uses: reviewdog/action-actionlint@v1
         with:
