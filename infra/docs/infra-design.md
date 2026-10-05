@@ -28,7 +28,7 @@ flowchart TB
 
 ### 제약 (Q30)
 
-- **계정**: 신규 가입 Paid plan + advanced features 활성화. 워크로드는 프로젝트(member) 계정. 로컬은 IAM Identity Center SSO profile
+- **계정**: 신규 가입 Paid plan + advanced features 활성화. 워크로드는 프로젝트(member) 계정. 로컬은 `aws login` 역할 세션 + `export-credentials` 임시 키
 - **비용**: 가입 크레딧 $100. Budget 이 정지 금액에서 EC2 자동 stop
 - **리전**: 서울(`ap-northeast-2`). SCP RegionFloor 에 서울 추가
 - **네이밍**: 리소스 `team1-<컴포넌트>`, 태그 `Team`(provider `default_tags`)

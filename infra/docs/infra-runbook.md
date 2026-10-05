@@ -8,7 +8,7 @@
 
 | 항목 | 발급처 | 쓰이는 곳 |
 |---|---|---|
-| AWS SSO profile (인프라 담당자) | IAM Identity Center (프로젝트 계정) | `terraform apply`, 수동 조작 |
+| `aws login` profile (인프라 담당자) | 프로젝트 계정 `AccountFullAccessRole` 세션 | `terraform apply`, 수동 조작 |
 | Cloudflare 존 + API 토큰 (Zone.DNS 편집) | CF 대시보드 → My Profile → API Tokens | `terraform.tfvars` |
 | 도메인 | Cloudflare Registrar | — |
 | GitHub 리포 관리자 권한 | — | Secrets, Environments |
@@ -26,8 +26,9 @@
 ### 1-2. Terraform
 
 ```bash
-aws configure sso                              # 최초 1회
-aws sso login --profile <profile> && export AWS_PROFILE=<profile>
+aws login --profile <profile>
+# provider 5.x 가 login_session 을 못 읽어 임시 키를 env 로 넘김. 만료 시 재실행
+eval "$(aws configure export-credentials --profile <profile> --format env)"
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars   # 계정 ID, cloudflare_*, alert_emails, budget_*
 terraform init
