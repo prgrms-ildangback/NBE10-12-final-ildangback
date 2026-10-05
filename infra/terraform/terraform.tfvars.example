@@ -15,8 +15,5 @@ budget_stop_usd  = 95
 # api_subdomain     = "api-next"
 # grafana_subdomain = ""
 
-# 구매 후 실제 도메인으로 교체 (기본값 go-mmit.site 는 임시)
-# domain = "go-mmit.site"
-
 # GitHub Environment 이름과 일치해야 함 (runbook 1-3)
 # deploy_environment = "production"

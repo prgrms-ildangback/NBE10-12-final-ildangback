@@ -1,6 +1,6 @@
 # 인프라 운영 절차 (Runbook)
 
-> 설계 배경은 `infra-design.md`. 도메인 `go-mmit.site` 는 임시 placeholder.
+> 설계 배경은 `infra-design.md`.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### 1-1. Cloudflare
 
-1. 도메인 구매 (Cloudflare Registrar 면 네임서버 자동). 존 ID 확인 (Overview 우측 하단)
+1. 존 ID 확인 (Overview 우측 하단)
 2. SSL/TLS → **Full (strict)**
 3. SSL/TLS → Origin Server → Create Certificate → `*.go-mmit.site`, `go-mmit.site` → PEM 저장
 

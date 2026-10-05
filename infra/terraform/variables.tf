@@ -52,7 +52,7 @@ variable "public_subnet_cidr" {
 # ---- 도메인 / Cloudflare -------------------------------------------------------
 
 variable "domain" {
-  description = "루트 도메인. go-mmit.site 는 임시 placeholder — 구매 시 실제 값으로 교체"
+  description = "루트 도메인 (Cloudflare Registrar 등록)"
   type        = string
   default     = "go-mmit.site"
 }

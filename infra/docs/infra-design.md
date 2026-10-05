@@ -116,8 +116,8 @@ flowchart TB
 
 ### Q23 — 도메인
 
-- `go-mmit.site` 는 placeholder. 구매 시 `variables.tf` `domain`, nginx `server_name`, `.env` `CORS_ALLOWED_ORIGINS`, Workers 커스텀 도메인 일괄 치환
-- 등록기관은 Cloudflare Registrar (네임서버 자동)
+- `go-mmit.site`. 등록기관은 Cloudflare Registrar (네임서버 자동)
+- 도메인을 바꾸면 `variables.tf` `domain`, nginx `server_name`, `.env` `CORS_ALLOWED_ORIGINS`, Workers 커스텀 도메인 일괄 치환
 
 ### Q24 — 컨테이너 이미지 / 메모리
 
@@ -221,7 +221,6 @@ infra/
 
 ## 4. 남은 확인 사항
 
-- **도메인 구매** 후 Q23 치환
 - **첫 청구서**: VAT 가 크레딧 적용 전/후 어느 금액에 붙는지 Tax 라인 확인
 - **Workers Git 연동** 복구 시 `deploy-front.yml` 과 둘 중 하나로 정리
 - **쿠키 인증** 도입 시 미디어 설계 메모의 "동일 오리진" → "동일 site" 문구 조정
