@@ -95,10 +95,11 @@ fi
 # 4. 비활성 색만 새 이미지로 기동. --wait 로 컨테이너 내부 healthcheck 통과까지 블록
 #    타임아웃 넉넉히 — 콜드스타트면 2분+ 걸릴 수 있음.
 #    실패해도 active 색(${CURRENT_COLOR})은 그대로 running — 자동 롤백.
+#    --no-deps: mysql 설정이 바뀌어도 배포 중 재생성하지 않는다 (runbook §2).
 echo "pulling ghcr image (tag=${TAG})..."
 docker compose pull "back-${NEW_COLOR}"
 echo "starting back-${NEW_COLOR}..."
-if ! docker compose up -d --wait --wait-timeout 300 "back-${NEW_COLOR}"; then
+if ! docker compose up -d --no-deps --wait --wait-timeout 300 "back-${NEW_COLOR}"; then
   echo "back-${NEW_COLOR} UNHEALTHY — active(back-${CURRENT_COLOR}) 유지, 배포 중단" >&2
   docker compose ps >&2
   docker compose logs --tail=80 "back-${NEW_COLOR}" >&2

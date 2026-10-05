@@ -106,6 +106,7 @@ curl -I https://api.go-mmit.site/actuator/health   # 200
 - 수동: Actions → Deploy Backend → Run workflow
 - 인스턴스가 꺼져 있으면 실패한다 (Budget 정지 가능성, §5). 재개 결정 후에만 `start_if_stopped` 체크
 - 04:00~04:30 (배치) 배포는 피한다
+- 배포는 back 만 재생성한다. mysql·nginx·모니터링 compose 설정 변경은 한산한 시간에 `docker compose up -d <서비스>` 로 직접 적용 (mysql 은 수십 초 중단)
 - GHCR PAT 만료 시 `docker compose pull` 이 `denied` 로 실패 → 재발급 후 1-4 `docker login` 다시
 
 ---
