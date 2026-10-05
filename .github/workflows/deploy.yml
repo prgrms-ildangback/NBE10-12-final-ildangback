@@ -4,8 +4,7 @@ name: Deploy Backend
 # 프론트는 별도 워크플로(deploy-front.yml)가 처리 — Cloudflare 쪽 Git 연동이 끊겨 대체
 on:
   push:
-    # TEMP: fork 최초 배포용. 성공 후 이 커밋 revert
-    branches: [main, feat/1-aws-migration]
+    branches: [main]
     paths:
       - 'back/**'
       - 'infra/docker/**'
