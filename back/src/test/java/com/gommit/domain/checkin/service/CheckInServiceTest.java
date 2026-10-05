@@ -654,9 +654,7 @@ class CheckInServiceTest {
         void swallowsMediaDeleteFailure() {
             CheckIn checkIn = checkInRow(100L);
             when(checkInRepository.findById(100L)).thenReturn(Optional.of(checkIn));
-            doThrow(new RuntimeException("storage down"))
-                    .when(mediaStore)
-                    .delete(anyString(), isNull());
+            doThrow(new RuntimeException("storage down")).when(mediaStore).delete(anyString(), isNull());
 
             service.deleteByAdmin(100L);
 

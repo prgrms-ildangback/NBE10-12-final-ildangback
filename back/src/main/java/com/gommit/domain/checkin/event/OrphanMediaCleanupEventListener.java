@@ -24,11 +24,7 @@ public class OrphanMediaCleanupEventListener {
         try {
             mediaStore.delete(event.mediaKey(), event.posterKey());
         } catch (RuntimeException e) {
-            log.warn(
-                    "orphan 미디어 정리 실패: mediaKey={}, posterKey={}",
-                    event.mediaKey(),
-                    event.posterKey(),
-                    e);
+            log.warn("orphan 미디어 정리 실패: mediaKey={}, posterKey={}", event.mediaKey(), event.posterKey(), e);
         }
     }
 }
