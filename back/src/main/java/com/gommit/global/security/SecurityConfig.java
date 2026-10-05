@@ -41,7 +41,7 @@ public class SecurityConfig {
     };
 
     private static final String[] HEALTH_ENDPOINTS = {
-        "/actuator/health",
+        "/actuator/health", "/actuator/info", // 배포 확인용 revision
     };
 
     private static final String WEBSOCKET_ENDPOINT = "/ws/**";

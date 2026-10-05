@@ -1,6 +1,7 @@
 package com.gommit.global.security;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.DisplayName;
@@ -18,6 +19,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * {@code /actuator/prometheus} 는 Q29(모니터링)에서 permitAll 이지만 다른 "그 외"와 다르다 —
  * 도커 내부망의 prometheus 컨테이너만 실제로 닿을 수 있어(back 은 ports: 게시 없음, nginx도
  * 이 경로 프록시 안 함) permitAll 이어도 인터넷에 안 열린다. 그래서 별도 테스트로 뗀다.
+ *
+ * {@code /actuator/info} 의 {@code app.revision} 은 deploy.yml 이 배포 반영 확인에 쓴다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -36,7 +39,16 @@ class ActuatorSecurityTest {
     }
 
     @Test
-    @DisplayName("health 외 actuator 엔드포인트는 인증 없이 접근 불가")
+    @DisplayName("GET /actuator/info 는 인증 없이 200, app.revision 포함")
+    void infoIsPublicWithRevision() throws Exception {
+        // 막는 사고: revision 을 못 읽으면 deploy.yml verify 가 매번 타임아웃.
+        mockMvc.perform(get("/actuator/info"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.app.revision").exists());
+    }
+
+    @Test
+    @DisplayName("health/info 외 actuator 엔드포인트는 인증 없이 접근 불가")
     void otherActuatorEndpointsAreNotPublic() throws Exception {
         // 막는 사고: 누가 management.endpoints.web.exposure.include 를 "*" 로 바꾸거나
         //           HEALTH_ENDPOINTS 매처를 "/actuator/**" 로 넓히면

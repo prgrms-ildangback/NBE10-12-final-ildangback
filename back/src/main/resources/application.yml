@@ -51,7 +51,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,prometheus
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
@@ -60,6 +60,14 @@ management:
   metrics:
     tags:
       application: ${spring.application.name} # Grafana 대시보드(JVM Micrometer)가 이 라벨로 필터링(Q29)
+  info:
+    env:
+      enabled: true # info.* 노출 (기본 off)
+
+info:
+  app:
+    # 이미지에 주입된 커밋 SHA. deploy.yml 이 배포 반영 확인에 사용
+    revision: ${GIT_SHA:unknown}
 
 point: # [임시값] 기획 확정 시 조정. 없으면 PointProperties 의 @DefaultValue 로 뜬다.
   check-in-reward: 10          # 개인 인증 1건
