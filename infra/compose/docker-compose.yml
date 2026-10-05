@@ -1,4 +1,4 @@
-# EC2 /opt/team1-app 에 배치. CD 가 .env 의 IMAGE_TAG 를 갱신하고 deploy.sh 를 돌린다.
+# EC2 /opt/team1-app 에 배치. deploy.sh 가 .env 의 IMAGE_TAG 를 갱신한다.
 #
 # back 은 로컬 blue-green: back-blue/back-green 둘 다 정의만 해두고, 배포 중에만 비활성 색을 새 이미지로 잠깐
 # 같이 띄운 뒤 nginx upstream 을 그쪽으로 스위치, 이전 색은 내린다. 평상시엔 한쪽만 running.
@@ -7,7 +7,7 @@
 name: gommit
 
 x-back-common: &back-common
-  image: ghcr.io/${GHCR_REPO}/back:${IMAGE_TAG:-latest}
+  image: ghcr.io/${GHCR_REPO}/back:${IMAGE_TAG:-prod}
   restart: unless-stopped
   env_file:
     - .env

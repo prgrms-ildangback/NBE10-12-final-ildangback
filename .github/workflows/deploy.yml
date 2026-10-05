@@ -1,6 +1,7 @@
 name: Deploy Backend
 
-# main 에 백엔드/인프라 변경이 머지되면 이미지 빌드 → GHCR → EC2 배포.
+# Pull 배포 (infra-design.md Q30): build → promote(승인, back:prod 재태깅) → EC2 폴러가 배포 → verify.
+# 롤백: Run workflow 에 이전 커밋 풀 SHA 입력 (runbook 3장).
 # 프론트는 별도 워크플로(deploy-front.yml)가 처리 — Cloudflare 쪽 Git 연동이 끊겨 대체
 on:
   push:
@@ -10,8 +11,14 @@ on:
       - 'infra/docker/**'
       - 'infra/compose/**'
       - 'infra/nginx/**'
+      - 'infra/monitoring/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: '롤백: 승격할 이전 커밋의 풀 SHA(40자). 비우면 선택한 브랜치를 빌드해 배포'
+        required: false
+        default: ''
 
 concurrency:
   group: deploy-prod
@@ -20,14 +27,11 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  id-token: write # AWS OIDC
 
 jobs:
   build:
+    if: inputs.rollback_sha == ''
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,73 +49,93 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # prod 태그는 promote 에서만 — 승인 전엔 폴러가 반응하지 않게.
       - uses: docker/build-push-action@v6
         with:
           context: ./back
           file: ./infra/docker/Dockerfile
           platforms: linux/amd64
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
+  promote:
     needs: build
+    # 롤백이면 build 가 skipped
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
-    # OIDC sub 클레임을 repo:<repo>:environment:production 으로 고정 →
-    # deploy-role 의 신뢰 정책(infra/terraform/iam.tf)이 이 환경에서 온 토큰만 허용.
+    # 필수 리뷰어 승인
     environment: production
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ap-northeast-2
-
-      - name: Trigger deploy via SSM
+      - id: target
         env:
-          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-          TAG: ${{ needs.build.outputs.tag }}
-          SHA: ${{ github.sha }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
         run: |
           set -euo pipefail
-
-          # 18:00~다음날 03:30 사이엔 인스턴스가 꺼져 있을 수 있음 → 켜고 SSM 준비 대기
-          STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-            --query 'Reservations[0].Instances[0].State.Name' --output text)
-          if [ "$STATE" != "running" ]; then
-            echo "instance is $STATE — starting"
-            aws ec2 start-instances --instance-ids "$INSTANCE_ID"
-            aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
-            for _ in $(seq 1 20); do
-              PING=$(aws ssm describe-instance-information \
-                --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
-                --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo None)
-              [ "$PING" = "Online" ] && break
-              echo "waiting for SSM agent ($PING)..."; sleep 15
-            done
+          SHA="${ROLLBACK_SHA:-$GITHUB_SHA}"
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::rollback_sha 는 40자 소문자 hex 커밋 SHA 여야 함: '$SHA'"
+            exit 1
           fi
+          {
+            echo "sha=$SHA"
+            echo "tag=${SHA::12}"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/back"
+          } >> "$GITHUB_OUTPUT"
 
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "deploy $TAG" \
-            --timeout-seconds 600 \
-            --parameters "commands=['sudo -u ec2-user bash /opt/team1-app/deploy.sh $TAG $SHA']" \
-            --query 'Command.CommandId' --output text)
-          echo "command: $CMD_ID"
+      - uses: docker/setup-buildx-action@v3
 
-          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          echo "----- stdout -----"
-          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-            --query 'StandardOutputContent' --output text
-          echo "----- stderr -----"
-          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-            --query 'StandardErrorContent' --output text
+      - name: Retag to prod
+        env:
+          IMAGE: ${{ steps.target.outputs.image }}
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # 승격마다 annotation 으로 prod digest 를 바꿔, 같은 SHA 재승격도 폴러가 재배포하게 한다
+          docker buildx imagetools create \
+            --annotation "index:com.gommit.promote-run=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --tag "$IMAGE:prod" "$IMAGE:$TAG"
+          docker buildx imagetools inspect "$IMAGE:prod"
 
-          STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-            --query 'Status' --output text)
-          echo "status: $STATUS"
-          test "$STATUS" = "Success"
+  verify:
+    needs: promote
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for new revision
+        env:
+          # 컷오버 전 api-next, 이후 api
+          VERIFY_URL: ${{ vars.DEPLOY_VERIFY_URL }}
+          SHA: ${{ needs.promote.outputs.sha }}
+        run: |
+          set -uo pipefail
+          if [ -z "$VERIFY_URL" ]; then
+            echo "::error::repo variable DEPLOY_VERIFY_URL 미설정 (runbook 1-3)"
+            exit 1
+          fi
+          BASE="${VERIFY_URL%/}"
+          # 폴링 60s + up --wait 300s + 15s + 여유
+          DEADLINE=$((SECONDS + 600))
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            REV=$(curl -fsS --max-time 10 "$BASE/actuator/info" | jq -r '.app.revision // empty' 2>/dev/null || true)
+            HEALTH=$(curl -fsS --max-time 10 "$BASE/actuator/health" | jq -r '.status // empty' 2>/dev/null || true)
+            echo "$(date -u +%H:%M:%S) revision=${REV:-?} health=${HEALTH:-?}"
+            if [ "$REV" = "$SHA" ] && [ "$HEALTH" = "UP" ]; then
+              echo "배포 확인: $BASE 가 $SHA 를 서빙 중"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::10분 안에 revision 이 $SHA 가 되지 않음. EC2 'journalctl -u team1-deploy-poller' 확인 — pull 실패면 GHCR PAT 만료 의심 (runbook 2장)."
+          exit 1

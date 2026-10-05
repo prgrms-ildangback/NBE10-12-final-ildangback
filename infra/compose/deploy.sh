@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# EC2 /opt/team1-app/deploy.sh. GitHub Actions 가 SSM RunCommand 로 호출:
-#   bash /opt/team1-app/deploy.sh <image-tag>
-# 롤백: 이미지·설정이 함께 되돌아가도록 SHA 를 두 번 넘긴다
-#   (bash deploy.sh <old-12자-sha> <old-full-sha>). 인자 1개면 설정은 최신 main 이 됨.
+# EC2 /opt/team1-app/deploy.sh. deploy-poller.sh 가 호출:
+#   bash /opt/team1-app/deploy.sh <12자-sha> <풀-sha>
+# 2번째 인자로 설정(compose/nginx)도 같은 커밋이 된다. 인자 1개면 설정은 최신 main.
+# 종료 코드 75 = 일시적 실패(fetch/pull) — 폴러가 다음 회차에 재시도한다.
 #
 # 전제 (최초 1회, infra/docs/infra-runbook.md 참고):
 #   - /opt/team1-app/src        : 이 리포지토리 clone
@@ -19,6 +19,7 @@ TAG="${1:?usage: deploy.sh <image-tag> [git-ref]}"
 REF="${2:-origin/main}"
 
 ACTIVE_CONF="$APP_DIR/nginx/conf.d/active-backend.conf"
+EX_TEMPFAIL=75
 
 nginx_running() {
   docker compose ps --status running --quiet nginx | grep -q .
@@ -50,9 +51,13 @@ echo "active=${CURRENT_COLOR} → 배포 대상(비활성)=${NEW_COLOR}"
 # 1. 리포지토리를 배포 대상 커밋으로 맞춘다 (compose / nginx 설정도 여기서 옴).
 #    CD 가 2번째 인자로 배포 커밋 SHA 를 넘기면 그 커밋에 고정 → 이미지와 설정이 같은 커밋.
 #    인자 없으면 origin/main HEAD (수동 호출 하위호환).
-git -C "$APP_DIR/src" fetch --depth 1 origin main
-if [ "$REF" != "origin/main" ]; then
-  git -C "$APP_DIR/src" fetch --depth 1 origin "$REF"
+if ! git -C "$APP_DIR/src" fetch --depth 1 origin main; then
+  echo "git fetch 실패" >&2
+  exit "$EX_TEMPFAIL"
+fi
+if [ "$REF" != "origin/main" ] && ! git -C "$APP_DIR/src" fetch --depth 1 origin "$REF"; then
+  echo "git fetch ${REF} 실패" >&2
+  exit "$EX_TEMPFAIL"
 fi
 # 직전 fetch 결과로 고정 — shallow 에서 SHA 는 로컬 ref 가 안 생김
 git -C "$APP_DIR/src" reset --hard FETCH_HEAD
@@ -66,21 +71,20 @@ rsync -a --inplace --delete "$APP_DIR/src/infra/monitoring/" "$APP_DIR/monitorin
 cp "$APP_DIR/src/infra/compose/docker-compose.yml" "$APP_DIR/docker-compose.yml"
 cp "$APP_DIR/src/infra/compose/backup.sh"          "$APP_DIR/backup.sh"
 
-# deploy.sh 자신도 갱신. 실행 중 파일을 in-place 로 덮으면 bash 가 깨지므로
-# 임시파일 → mv(원자적 rename, inode 교체). 새 버전은 다음 배포부터 적용.
+# deploy.sh 자신과 폴러도 갱신. 실행 중 파일을 in-place 로 덮으면 bash 가 깨지므로
+# 임시파일 → mv(원자적 rename, inode 교체). 새 버전은 다음 실행부터 적용.
 # src 에 스크립트가 없으면(옛 SHA 로 config 롤백 등) 건너뜀 — set -e 로 죽지 않게.
-if [ -f "$APP_DIR/src/infra/compose/deploy.sh" ]; then
-  cp -p "$APP_DIR/deploy.sh" "$APP_DIR/deploy.sh.bak" 2>/dev/null || true
-  install -m 755 "$APP_DIR/src/infra/compose/deploy.sh" "$APP_DIR/deploy.sh.new"
-  mv "$APP_DIR/deploy.sh.new" "$APP_DIR/deploy.sh"
-fi
+for script in deploy.sh deploy-poller.sh start-stack.sh; do
+  if [ -f "$APP_DIR/src/infra/compose/$script" ]; then
+    cp -p "$APP_DIR/$script" "$APP_DIR/$script.bak" 2>/dev/null || true
+    install -m 755 "$APP_DIR/src/infra/compose/$script" "$APP_DIR/$script.new"
+    mv "$APP_DIR/$script.new" "$APP_DIR/$script"
+  fi
+done
 
-# 3. 이미지 태그 갱신
-if grep -q '^IMAGE_TAG=' .env; then
-  sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${TAG}/" .env
-else
-  echo "IMAGE_TAG=${TAG}" >> .env
-fi
+# 3. 이미지 태그는 이번 실행에만 적용(셸 env 가 .env 보다 우선). .env 는 5번 전환 성공 후에 기록 —
+#    실패한 태그가 .env 에 남으면 재부팅·수동 up 이 active 색을 그 이미지로 재생성한다.
+export IMAGE_TAG="$TAG"
 
 # 3.5 새 nginx 설정(api.conf 등, active-backend.conf 제외) 사전 검증 —
 #     백엔드 색 스위치 전에 실패하도록. (bind-mount 라 파일은 이미 위에서 갱신됨.)
@@ -92,7 +96,10 @@ fi
 #    타임아웃 넉넉히 — 콜드스타트면 2분+ 걸릴 수 있음.
 #    실패해도 active 색(${CURRENT_COLOR})은 그대로 running — 자동 롤백.
 echo "pulling ghcr image (tag=${TAG})..."
-docker compose pull "back-${NEW_COLOR}"
+if ! docker compose pull "back-${NEW_COLOR}"; then
+  echo "이미지 pull 실패" >&2
+  exit "$EX_TEMPFAIL"
+fi
 echo "starting back-${NEW_COLOR}..."
 if ! docker compose up -d --wait --wait-timeout 300 "back-${NEW_COLOR}"; then
   echo "back-${NEW_COLOR} UNHEALTHY — active(back-${CURRENT_COLOR}) 유지, 배포 중단" >&2
@@ -133,6 +140,12 @@ if nginx_running; then
   echo "nginx reloaded → active=back-${NEW_COLOR}"
 else
   mv "$APP_DIR/nginx/conf.d/active-backend.conf.new" "$ACTIVE_CONF"
+fi
+
+if grep -q '^IMAGE_TAG=' .env; then
+  sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${TAG}/" .env
+else
+  echo "IMAGE_TAG=${TAG}" >> .env
 fi
 
 # 6. 이전 색 컨테이너 프로세스 정지 (제거 아님 — 다음 배포 때 그 색이 다시 비활성 대상으로 재사용, 이미지는 7에서 정리).

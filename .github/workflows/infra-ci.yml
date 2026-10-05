@@ -45,7 +45,7 @@ jobs:
 
       # 막는 것: 설계 불변식이 조용히 깨지는 것 —
       #   SG 에 22/0.0.0.0/0 개방, 인스턴스 타입 변경, IMDSv2 해제, 루트 볼륨 미암호화,
-      #   user_data_replace_on_change=true, 자동기동 크론/타임존 어긋남, DNS proxied 해제.
+      #   user_data_replace_on_change=true, 재부팅 알람 누락, DNS proxied 해제.
       #   (tests/infra.tftest.hcl, mock_provider 라 자격증명·비용 없음)
       - name: test
         run: terraform test -no-color
@@ -79,7 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck infra/bootstrap/user-data.sh infra/compose/deploy.sh infra/compose/backup.sh
+          shellcheck infra/bootstrap/user-data.sh infra/compose/deploy.sh infra/compose/deploy-poller.sh infra/compose/start-stack.sh infra/compose/backup.sh
 
   # ---- 워크플로 자체 문법 (가벼워서 항상) --------------------------------
   actionlint:

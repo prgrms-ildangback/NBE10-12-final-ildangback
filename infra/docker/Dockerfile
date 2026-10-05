@@ -37,6 +37,12 @@ WORKDIR /app
 
 COPY --from=build --chown=gommit:gommit /app/app.jar ./app.jar
 
+# 커밋 SHA. 레이블은 폴러가 deploy.sh 에 넘기고, ENV 는 /actuator/info 로 노출된다.
+# 캐시 유지를 위해 jar 뒤에 둔다.
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$GIT_SHA
+ENV GIT_SHA=$GIT_SHA
+
 # media-tmp named volume 이 root 소유로 초기화돼 비루트 런타임이 쓰기 실패하는 것 방지
 RUN mkdir -p /app/media-tmp && chown -R gommit:gommit /app/media-tmp
 
