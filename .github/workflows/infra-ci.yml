@@ -79,7 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck infra/bootstrap/user-data.sh infra/compose/deploy.sh infra/compose/backup.sh
+          shellcheck infra/bootstrap/user-data.sh infra/compose/deploy.sh infra/compose/backup.sh infra/compose/start.sh
 
   # ---- 워크플로 자체 문법 (가벼워서 항상) --------------------------------
   actionlint:

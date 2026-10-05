@@ -6,9 +6,17 @@
 # git 비추적)가 갖는다 — deploy.sh 가 그 파일을 읽고 쓴다.
 name: gommit
 
+# 컨테이너 로그 파일 상한 (기본 무제한). 장기 조회는 Loki
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 x-back-common: &back-common
   image: ghcr.io/${GHCR_REPO}/back:${IMAGE_TAG:-latest}
   restart: unless-stopped
+  logging: *default-logging
   env_file:
     - .env
   environment:
@@ -22,15 +30,12 @@ x-back-common: &back-common
   # montageExecutor(MontageAsyncConfig)의 awaitTerminationSeconds=30 이 실제로 발동하려면
   # SIGTERM 후 SIGKILL 까지 최소 30초는 있어야 함 — docker 기본 10초보다 여유 둠.
   stop_grace_period: 40s
-  # 1600M = 인스턴스 4GB(t3a.medium) 전환분 반영. DailyLog 몽타주(feat/36, main 미병합) 완화
-  # blue/green 이 배포 중 잠깐 같이 뜨는 순간에도 둘이 겹쳐 인스턴스 메모리(4G)를 넘으면 안 되어 조정
+  # 배포 중 blue/green 동시 기동에도 4GB 를 넘지 않게
   deploy:
     resources:
       limits:
         memory: 1600M
-  # 이미지 Dockerfile 의 HEALTHCHECK 와 값을 맞춘다 (드리프트 방지).
-  # retries 5 = start_period 후 ~150s 여유 — 아침 콜드스타트(2분+)에 --wait 가
-  # 조기에 unhealthy 로 판정하지 않도록.
+  # Dockerfile HEALTHCHECK 와 동일 값. retries 5 는 콜드스타트(2분+) 대비.
   healthcheck:
     test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
     interval: 30s
@@ -42,6 +47,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "443:443"
     volumes:
@@ -64,12 +70,14 @@ services:
   mysql:
     image: mysql:8.4
     restart: unless-stopped
+    logging: *default-logging
     command:
       # 버퍼풀 256M + 스레드 버퍼(50 conn) + InnoDB 오버헤드가 메모리 한도(600M) 안에 들어오도록.
       - --innodb-buffer-pool-size=256M
       - --max-connections=50
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
+      - --binlog-expire-logs-seconds=604800   # binlog 7일 (기본 30일)
     environment:
       MYSQL_DATABASE: ${DB_NAME}
       MYSQL_USER: ${DB_USERNAME}
@@ -96,6 +104,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.0.1
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -122,6 +131,7 @@ services:
   loki:
     image: grafana/loki:3.3.2
     restart: unless-stopped
+    logging: *default-logging
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml:ro
@@ -134,6 +144,7 @@ services:
   promtail:
     image: grafana/promtail:3.3.2
     restart: unless-stopped
+    logging: *default-logging
     command: -config.file=/etc/promtail/config.yaml
     volumes:
       - ./monitoring/promtail-config.yaml:/etc/promtail/config.yaml:ro
@@ -149,6 +160,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped
+    logging: *default-logging
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}

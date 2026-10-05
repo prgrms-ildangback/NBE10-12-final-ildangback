@@ -65,6 +65,10 @@ rsync -a --inplace --delete --exclude 'conf.d/active-backend.conf' --exclude '*.
 rsync -a --inplace --delete "$APP_DIR/src/infra/monitoring/" "$APP_DIR/monitoring/"
 cp "$APP_DIR/src/infra/compose/docker-compose.yml" "$APP_DIR/docker-compose.yml"
 cp "$APP_DIR/src/infra/compose/backup.sh"          "$APP_DIR/backup.sh"
+# start.sh 없는 옛 커밋으로 롤백해도 죽지 않게
+if [ -f "$APP_DIR/src/infra/compose/start.sh" ]; then
+  install -m 755 "$APP_DIR/src/infra/compose/start.sh" "$APP_DIR/start.sh"
+fi
 
 # deploy.sh 자신도 갱신. 실행 중 파일을 in-place 로 덮으면 bash 가 깨지므로
 # 임시파일 → mv(원자적 rename, inode 교체). 새 버전은 다음 배포부터 적용.
