@@ -90,21 +90,7 @@ variable "cloudflare_api_token" {
 # ---- 모니터링 (Q29) ------------------------------------------------------------
 
 variable "grafana_subdomain" {
-  description = "Grafana 서브도메인 (앞부분만). apex/api 와 마찬가지로 Cloudflare 프록시 ON"
+  description = "Grafana 서브도메인 (앞부분만). apex/api 와 마찬가지로 Cloudflare 프록시 ON. 빈 값이면 레코드 없음"
   type        = string
   default     = "grafana"
-}
-
-# ---- GitHub Actions OIDC 배포 -----------------------------------------------
-
-variable "github_repo" {
-  description = "OIDC 신뢰 대상 리포지토리 (owner/name)"
-  type        = string
-  default     = "prgrms-be-devcourse/NBE10-12-final-ildangback"
-}
-
-variable "deploy_environment" {
-  description = "deploy.yml 의 deploy job 이 도는 GitHub Environment 이름. OIDC sub 를 이 환경으로 한정한다."
-  type        = string
-  default     = "production"
 }

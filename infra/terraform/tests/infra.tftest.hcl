@@ -4,16 +4,7 @@
 #
 # 각 run 블록은 "이 설정이 깨지면 무슨 사고가 나는가"를 error_message 에 적었다.
 
-mock_provider "aws" {
-  # 모의 apply 시 IAM 역할 ARN 이 유효한 형식이어야 scheduler 의 role_arn 검증을 통과.
-  mock_resource "aws_iam_role" {
-    defaults = { arn = "arn:aws:iam::123456789012:role/mock" }
-  }
-  # GitHub OIDC provider 는 계정 싱글턴이라 data 로만 조회한다(iam.tf) — 실제 조회 대신 가짜 응답.
-  mock_data "aws_iam_openid_connect_provider" {
-    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
-  }
-}
+mock_provider "aws" {}
 mock_provider "cloudflare" {}
 
 # security.tf 의 data.http(Cloudflare IP 목록)를 가짜 3개 대역으로 대체.
@@ -108,45 +99,26 @@ run "instance_is_hardened_and_cheap" {
     error_message = "user_data_replace_on_change 가 true 다. bootstrap 수정이 인스턴스를 재생성해 .env/certs/src 를 유실시킨다 (runbook 1-4 재실행 필요)."
   }
 
-  # 막는 사고: 누가 iam_instance_profile 를 뗌 → SSM 에이전트가 등록 안 됨 → 배포·셸 접속 전부 불가.
+  # 막는 사고: 누가 iam_instance_profile 를 뗌 → SSM 에이전트가 등록 안 됨 → 셸 접속 불가.
   assert {
     condition     = aws_instance.app.iam_instance_profile != ""
-    error_message = "인스턴스에 IAM 프로파일이 없다. SSM RunCommand/Session 이 안 되면 유일한 배포·접속 경로가 사라진다 (22 미개방)."
+    error_message = "인스턴스에 IAM 프로파일이 없다. SSM Session 이 안 되면 유일한 셸 접속 경로가 사라진다 (22 미개방)."
   }
 }
 
 # -----------------------------------------------------------------------------
-run "auto_start_before_batch" {
+run "hung_instance_auto_reboots" {
   command = plan
 
-  # 막는 사고: 크론이 밀리거나 지워짐 → 03:30 에 인스턴스가 안 켜짐 → 04:00 정산 배치(포인트·스트릭) 누락.
+  # 막는 사고: 24시간 가동 중 OS 무응답이 방치됨.
   assert {
-    condition     = aws_scheduler_schedule.ec2_start.schedule_expression == "cron(30 3 * * ? *)"
-    error_message = "자동 기동 크론이 03:30 이 아니다. 루트가 18:00 에 끈 인스턴스가 04:00 배치 전에 안 켜진다 (design Q19)."
-  }
-
-  # 막는 사고: 타임존이 빠지면 UTC 로 해석 → cron(30 3) = 12:30 KST 기동 → 배치 시간과 무관.
-  assert {
-    condition     = aws_scheduler_schedule.ec2_start.schedule_expression_timezone == "Asia/Seoul"
-    error_message = "스케줄 타임존이 Asia/Seoul 이 아니다. UTC 로 해석되면 기동 시각이 9시간 어긋난다."
-  }
-}
-
-# -----------------------------------------------------------------------------
-run "deploy_oidc_is_environment_scoped" {
-  # assume_role_policy 는 AWS 가 정규화해 plan 단계엔 unknown → apply(모의) 로 확정값 검사.
-  command = apply
-
-  # 막는 사고: 누가 sub 조건을 repo:<repo>:* 같은 와일드카드로 넓힘 → 아무 브랜치/태그/PR
-  #           워크플로가 deploy-role 을 탈취해 ssm:SendCommand 로 EC2 임의 명령 실행 (design 보안 메모).
-  assert {
-    condition     = can(regex("repo:[^\"]+:environment:[^\"]+", aws_iam_role.deploy.assume_role_policy))
-    error_message = "deploy-role 신뢰 정책 sub 가 GitHub Environment 로 한정돼 있지 않다. repo:<repo>:environment:<env> 형태여야 브랜치/PR 에서의 역할 탈취를 막는다."
+    condition     = aws_cloudwatch_metric_alarm.instance_reboot.metric_name == "StatusCheckFailed_Instance"
+    error_message = "자동 재부팅 알람이 인스턴스 상태 검사(StatusCheckFailed_Instance)를 보지 않는다."
   }
 
   assert {
-    condition     = !can(regex("repo:[^\"]*:[*]", aws_iam_role.deploy.assume_role_policy))
-    error_message = "deploy-role 신뢰 정책에 repo:...:* 와일드카드 sub 가 있다. 특정 environment 로 좁혀야 한다."
+    condition     = contains(aws_cloudwatch_metric_alarm.instance_reboot.alarm_actions, "arn:aws:automate:${var.aws_region}:ec2:reboot")
+    error_message = "알람 액션이 EC2 reboot 이 아니다. 무응답 인스턴스가 자동 복구되지 않는다."
   }
 }
 
@@ -159,5 +131,26 @@ run "api_dns_is_proxied" {
   assert {
     condition     = cloudflare_record.api.proxied == true
     error_message = "api 레코드가 proxied 가 아니다. 오리진 IP 노출 + 보안그룹(CF IP only)과 충돌해 접속 불가."
+  }
+
+  assert {
+    condition     = alltrue([for r in cloudflare_record.grafana : r.proxied == true])
+    error_message = "grafana 레코드가 proxied 가 아니다. 오리진 IP 노출 + 보안그룹(CF IP only)과 충돌해 접속 불가."
+  }
+}
+
+# -----------------------------------------------------------------------------
+run "migration_test_records_only" {
+  command = plan
+
+  variables {
+    api_subdomain     = "api-next"
+    grafana_subdomain = ""
+  }
+
+  # 막는 사고: 이전 테스트 중 새 state 가 운영 레코드(api/grafana)를 만들어 옛 state 와 충돌.
+  assert {
+    condition     = cloudflare_record.api.name == "api-next" && length(cloudflare_record.grafana) == 0
+    error_message = "테스트 설정(api-next, grafana 없음)에서 레코드 이름/개수가 기대와 다르다."
   }
 }

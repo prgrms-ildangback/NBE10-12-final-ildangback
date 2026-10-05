@@ -1,5 +1,5 @@
 output "instance_id" {
-  description = "GitHub Actions Secret EC2_INSTANCE_ID 에 넣을 값"
+  description = "SSM 세션 대상"
   value       = aws_instance.app.id
 }
 
@@ -14,12 +14,7 @@ output "api_fqdn" {
 
 output "grafana_fqdn" {
   description = "nginx Basic Auth(1차) + Grafana 로그인(2차) 통과해야 열람 가능"
-  value       = "${var.grafana_subdomain}.${var.domain}"
-}
-
-output "deploy_role_arn" {
-  description = "GitHub Actions Secret AWS_DEPLOY_ROLE_ARN 에 넣을 값"
-  value       = aws_iam_role.deploy.arn
+  value       = var.grafana_subdomain == "" ? "(레코드 없음)" : "${var.grafana_subdomain}.${var.domain}"
 }
 
 output "ssm_start_command" {

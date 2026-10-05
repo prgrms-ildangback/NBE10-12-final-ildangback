@@ -6,11 +6,9 @@ cloudflare_api_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 # 구매 후 실제 도메인으로 교체 (기본값 go-mmit.site 는 임시)
 # domain = "go-mmit.site"
 
-# github_repo = "prgrms-be-devcourse/NBE10-12-final-ildangback"
-
-# deploy.yml 의 deploy job GitHub Environment 이름. OIDC sub 를 이 환경으로 한정한다.
-# 리포 Settings → Environments 에 같은 이름을 만들어야 함 (runbook 1-3).
-# deploy_environment = "production"
+# 계정 이전 테스트 중. 컷오버 때 지운다 (runbook 1-2).
+# api_subdomain     = "api-next"
+# grafana_subdomain = ""
 
 # small 이상은 결재 필요
 # instance_type = "t4g.small"

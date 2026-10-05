@@ -45,7 +45,7 @@ resource "aws_instance" "app" {
   tags = { Name = "${var.name_prefix}-app" }
 
   lifecycle {
-    # 매일 18:00 루트 계정이 stop → 아침 start. TF 가 상태 드리프트로 보지 않게.
+    # 새 AMI 가 나와도 인스턴스를 교체하지 않게.
     ignore_changes = [ami]
   }
 }
