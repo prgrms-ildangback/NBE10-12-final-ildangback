@@ -12,6 +12,11 @@ on:
       - 'infra/nginx/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
+    inputs:
+      start_if_stopped:
+        description: '인스턴스가 꺼져 있으면 켜고 배포 (Budget 정지 해제 시에만)'
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-prod
@@ -60,8 +65,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    # OIDC sub 클레임을 repo:<repo>:environment:production 으로 고정 →
-    # deploy-role 의 신뢰 정책(infra/terraform/iam.tf)이 이 환경에서 온 토큰만 허용.
+    # OIDC sub 를 environment 로 한정 (infra/terraform/iam.tf)
     environment: production
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -74,13 +78,18 @@ jobs:
           INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
           TAG: ${{ needs.build.outputs.tag }}
           SHA: ${{ github.sha }}
+          START_IF_STOPPED: ${{ inputs.start_if_stopped }}
         run: |
           set -euo pipefail
 
-          # 18:00~다음날 03:30 사이엔 인스턴스가 꺼져 있을 수 있음 → 켜고 SSM 준비 대기
+          # 꺼져 있으면 Budget 정지일 수 있어 명시적 dispatch 로만 켠다
           STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
             --query 'Reservations[0].Instances[0].State.Name' --output text)
           if [ "$STATE" != "running" ]; then
+            if [ "$START_IF_STOPPED" != "true" ]; then
+              echo "::error::instance is $STATE (Budget 정지 가능성). 재개하려면 start_if_stopped=true 로 dispatch"
+              exit 1
+            fi
             echo "instance is $STATE — starting"
             aws ec2 start-instances --instance-ids "$INSTANCE_ID"
             aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
