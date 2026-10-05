@@ -34,9 +34,6 @@ chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 # ---- SSM 에이전트 (AL2023 기본 포함, 실행 보장) --------------------------
 systemctl enable --now amazon-ssm-agent
 
-# ---- SSH 예외 접속 (Q14 추가결정) --------------------------------------
-# 공개키는 user-data에 직접 쓰지 않고 runbook 6-1(SSM)로 등록한다. 재빌드 시 재등록.
-
 # ---- 앱 디렉터리 ---------------------------------------------------------
 install -d -o ec2-user -g ec2-user "${APP_DIR}"
 install -d -o ec2-user -g ec2-user "${APP_DIR}/certs"       # Cloudflare Origin CA 인증서

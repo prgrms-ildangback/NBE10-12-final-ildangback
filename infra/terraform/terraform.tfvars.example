@@ -20,6 +20,3 @@ budget_stop_usd  = 95
 
 # GitHub Environment 이름과 일치해야 함 (runbook 1-3)
 # deploy_environment = "production"
-
-# SSH 예외 (Q14 추가결정). /32 만. 키 등록은 runbook 6-1
-# ssh_allowed_cidrs = ["203.0.113.7/32"]

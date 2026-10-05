@@ -60,31 +60,6 @@ run "security_group_locks_origin" {
     ])
     error_message = "인그레스에 0.0.0.0/0 이 있다. 443 은 Cloudflare IP 대역만 허용해야 오리진 우회를 막는다 (design Q14)."
   }
-
-  # 기본값(ssh_allowed_cidrs=[])이면 SSH 규칙이 0개여야 한다 (SSM 전용 = 원래 설계).
-  assert {
-    condition     = length(aws_vpc_security_group_ingress_rule.ssh_operator) == 0
-    error_message = "ssh_allowed_cidrs 를 안 줬는데 22 규칙이 생겼다. 기본은 SSH 미개방이어야 한다."
-  }
-}
-
-# -----------------------------------------------------------------------------
-run "ssh_exception_is_narrow" {
-  command = plan
-
-  variables {
-    ssh_allowed_cidrs = ["203.0.113.7/32"]
-  }
-
-  # 막는 사고: 예외 SSH 를 열되 포트가 22 아님 / 와일드카드로 넓힘 → 오리진 전면 노출.
-  assert {
-    condition = alltrue([
-      for r in values(aws_vpc_security_group_ingress_rule.ssh_operator) :
-      r.from_port == 22 && r.to_port == 22 && r.ip_protocol == "tcp" &&
-      r.cidr_ipv4 != "0.0.0.0/0" && r.cidr_ipv4 != "::/0" && endswith(r.cidr_ipv4, "/32")
-    ])
-    error_message = "SSH 예외 규칙이 22/tcp·단일 호스트(/32) 조건을 벗어났다 (design Q14 추가결정)."
-  }
 }
 
 # -----------------------------------------------------------------------------

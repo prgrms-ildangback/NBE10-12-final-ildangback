@@ -166,22 +166,6 @@ docker stats --no-stream; free -h
 
 로그·메트릭은 `https://grafana.go-mmit.site` (Basic Auth + Grafana 로그인).
 
-### 6-1. SSH 예외 접속 (Q14 추가결정)
-
-SSM 을 못 쓰는 운영자만.
-
-1. 그 사람이 `ssh-keygen -t ed25519 -C team1-ops -f ~/.ssh/team1` → 공개키만 전달
-2. `terraform.tfvars` 에 `ssh_allowed_cidrs = ["<그사람-IP>/32"]` → `apply` (SG 만 변경)
-3. SSM 으로 등록:
-   ```bash
-   sudo -u ec2-user tee -a /home/ec2-user/.ssh/authorized_keys <<'KEY'
-   ssh-ed25519 AAAA... team1-ops
-   KEY
-   ```
-4. 접속: `ssh -i ~/.ssh/team1 ec2-user@<EIP>`
-
-IP 가 바뀌면 2번만, 인스턴스를 새로 만들면 3번을 다시.
-
 ---
 
 ## 7. 트러블슈팅

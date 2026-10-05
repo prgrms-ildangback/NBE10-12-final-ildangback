@@ -49,21 +49,6 @@ variable "public_subnet_cidr" {
   default = "10.0.1.0/24"
 }
 
-# ---- SSH 예외 (Q14 추가결정) ---------------------------------------------------
-variable "ssh_allowed_cidrs" {
-  description = "SSH(22) 를 허용할 CIDR 목록. 운영자 공인 IP /32. 비우면 SSH 안 엶"
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for c in var.ssh_allowed_cidrs :
-      c != "0.0.0.0/0" && c != "::/0" && can(regex("/32$", c))
-    ])
-    error_message = "ssh_allowed_cidrs 는 /32 단위만 허용한다. 0.0.0.0/0 은 금지 — 22 는 Cloudflare 뒤가 아니라 오리진 직접 노출이다."
-  }
-}
-
 # ---- 도메인 / Cloudflare -------------------------------------------------------
 
 variable "domain" {

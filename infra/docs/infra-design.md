@@ -47,7 +47,7 @@ flowchart TB
 | Swap | 파일 2GB, `swappiness=10` |
 | EBS | 루트 gp3 20GB 암호화 단일. MySQL 은 named volume (Q13) |
 | EIP | 1개. stop/start 후에도 IP 유지 |
-| 보안그룹 | 443 = Cloudflare IPv4 대역만. 22 = 기본 미개방 (Q14) |
+| 보안그룹 | 443 = Cloudflare IPv4 대역만. 22 미개방 (Q14) |
 | 메타데이터 | IMDSv2 강제 |
 | 가동 | 24시간. `StatusCheckFailed_Instance` 5분 → 자동 reboot + 메일 |
 
@@ -98,7 +98,6 @@ flowchart TB
 ### Q14 — 접속
 
 - 배포·셸은 **SSM** (22 미개방). 443 은 Cloudflare IP 대역만 (오리진 우회 차단)
-- **추가결정 — SSH 예외**: SSM 을 못 쓰는 운영자만 `var.ssh_allowed_cidrs` 에 `/32` 로 22 허용 (기본 `[]`). 키는 `authorized_keys` 수동 등록. `0.0.0.0/0` 은 validation + tftest 가 차단
 
 ### Q15 — Cloudflare 관리 범위
 
@@ -186,7 +185,7 @@ infra/
   terraform/
     versions.tf providers.tf variables.tf outputs.tf
     network.tf        # VPC / IGW / 퍼블릭 서브넷 1 / 라우트
-    security.tf       # SG: 443 = Cloudflare 대역, 22 = ssh_allowed_cidrs 예외
+    security.tf       # SG: 443 = Cloudflare 대역
     iam.tf            # EC2 SSM 역할, GitHub OIDC provider + 배포 역할
     ec2.tf            # EC2, EIP, reboot 알람
     dns.tf            # api / grafana A 레코드 (proxied)
@@ -210,7 +209,7 @@ infra/
 
 | 검사 | 막는 사고 |
 |---|---|
-| security_group_locks_origin / ssh_exception_is_narrow | 443·22 가 넓게 열려 오리진 직접 노출 |
+| security_group_locks_origin | 443 이 넓게 열려 오리진 직접 노출 |
 | instance_is_hardened_and_cheap | 타입 상향, IMDSv1, 볼륨 평문, user_data 수정 시 재생성, IAM 프로파일 누락 |
 | credit_budget_stops_ec2 | 크레딧 포함 집계, 월 단위 집계, 자동 stop 해제·한도 이상 |
 | status_check_reboots_instance | OS 무응답 방치 |

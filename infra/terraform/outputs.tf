@@ -29,8 +29,3 @@ output "ssm_session_command" {
   description = "기본 셸 접속 경로 (SSM). IAM 접근이 있는 사람용"
   value       = "aws ssm start-session --target ${aws_instance.app.id} --region ${var.aws_region}"
 }
-
-output "ssh_command" {
-  description = "SSH 예외용. ssh_allowed_cidrs + 키 등록(runbook 6-1) 시에만 동작"
-  value       = length(var.ssh_allowed_cidrs) > 0 ? "ssh ec2-user@${aws_eip.app.public_ip}" : "(ssh_allowed_cidrs 비어있음 — SSH 미개방)"
-}
