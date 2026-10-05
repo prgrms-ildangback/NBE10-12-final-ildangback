@@ -58,7 +58,7 @@ variable "domain" {
 }
 
 variable "api_subdomain" {
-  description = "백엔드 서브도메인 (앞부분만). 컷오버 전 테스트는 api-next"
+  description = "백엔드 서브도메인 (앞부분만)"
   type        = string
   default     = "api"
 }
@@ -77,7 +77,7 @@ variable "cloudflare_api_token" {
 # ---- 모니터링 (Q29) ------------------------------------------------------------
 
 variable "grafana_subdomain" {
-  description = "Grafana 서브도메인 (앞부분만). 빈 문자열이면 레코드 미생성(컷오버 전)"
+  description = "Grafana 서브도메인 (앞부분만). 빈 문자열이면 레코드 미생성"
   type        = string
   default     = "grafana"
 }
