@@ -9,11 +9,14 @@
 
 | 항목 | 발급처 | 쓰이는 곳 |
 |---|---|---|
-| AWS IAM 사용자 (인프라 담당자) | 강의 AWS 계정 | `terraform apply`, 수동 조작 |
+| AWS IAM 사용자 (인프라 담당자) | 팀 AWS 계정 | `terraform apply`, 수동 조작 |
 | Cloudflare 계정 + 존 | cloudflare.com | DNS, Workers, Origin CA |
 | Cloudflare API 토큰 (Zone.DNS 편집) | CF 대시보드 → My Profile → API Tokens | `terraform.tfvars` |
 | 도메인 | Cloudflare Registrar (권장) | — |
-| GitHub 리포 관리자 권한 | — | Actions Secrets 등록 |
+| GitHub 리포 관리자 권한 | — | Environment·Variables 등록 |
+| GitHub PAT (classic, `read:packages`) | 패키지를 읽을 수 있는 계정 | EC2 `docker login` (1-3) |
+
+> GitHub 에는 AWS 자격증명을 두지 않는다. 배포는 EC2 폴러가 GHCR 을 감시하는 Pull 방식 (design Q30).
 
 ---
 
@@ -37,33 +40,39 @@ terraform init
 terraform apply
 ```
 
-출력값 기록:
-- `instance_id`      → GitHub Secret `EC2_INSTANCE_ID`
-- `deploy_role_arn`  → GitHub Secret `AWS_DEPLOY_ROLE_ARN`
+출력값 `instance_id` 는 SSM 세션 접속(1-4, 6장)에 쓴다. GitHub 에 등록할 AWS 값은 없다.
+
+DNS 레코드 이름은 변수다 (`api_subdomain`, `grafana_subdomain`).
+옛 서버가 `api` 를 쓰는 동안(계정 이전 테스트) 새 서버는 `api-next` 로만 띄운다:
+```hcl
+api_subdomain     = "api-next"
+grafana_subdomain = ""          # 빈 문자열 = 레코드 안 만듦
+```
+컷오버 때 `"api"` / `"grafana"` 로 바꿔 apply. nginx `server_name` 은 `api`·`api-next` 둘 다 받으므로
+수정 불필요, Origin CA 도 `*.go-mmit.site` 라 재발급 불필요.
 
 > ⚠️ `apply` 직후 `terraform.tfstate` 를 팀 드라이브에 업로드 (시크릿 파일 취급, git 아님).
 > 이후에도 `apply` 할 때마다 갱신본 업로드. **인프라 담당자 1인만 apply.**
 
-### 1-3. GitHub Actions Secrets + Environment
+### 1-3. GitHub Environment + Variables
 
-리포 Settings → Secrets and variables → Actions:
-
-| Secret | 값 |
-|---|---|
-| `EC2_INSTANCE_ID` | terraform output |
-| `AWS_DEPLOY_ROLE_ARN` | terraform output |
+> fork/새 리포는 environments·secrets·variables 를 복사하지 않는다 — 새 리포에서 다시 만든다.
 
 리포 Settings → Environments → **`production` 생성**:
-- `deploy.yml` 의 `deploy` job 이 이 환경에서 돈다. OIDC 신뢰 정책(`iam.tf`)이
-  `repo:<repo>:environment:production` sub 만 허용하므로 환경 이름이 안 맞으면
-  `configure-aws-credentials` 단계가 실패한다.
-- Terraform `deploy_environment` 변수(기본 `production`)와 이름 일치시킬 것.
-- **Deployment protection rules → Required reviewers 를 반드시 1명 이상 건다.**
-  `deploy.yml` 은 push(main) 외에 `workflow_dispatch` 로도 돈다. 옛 커밋이나 다른 브랜치에서
-  dispatch 하면 `back:latest` 태그가 그 코드로 이동해 prod 포인터가 뒤로 갈 수 있다.
-  승인 게이트가 그걸 막는 유일한 장치다. (롤백은 이 워크플로 대신 런북 3장의 SSM 직접 호출로 한다.)
+- `deploy.yml` 의 `promote` job(`back:<sha>` → `back:prod` 재태깅)이 이 환경에서 돈다.
+  EC2 폴러는 `prod` 만 보므로 **이 승인이 운영 반영의 유일한 게이트**다.
+- **Deployment protection rules → Required reviewers 를 1명 이상.** 혼자 테스트할 땐
+  "Prevent self-review" 를 끈다.
+- **Deployment branches**: 운영은 `main` 만. 머지 전 브랜치 검증 기간에만 작업 브랜치를 추가하고, 끝나면 뺀다.
 
-`GITHUB_TOKEN` 은 자동 제공 (CI 의 GHCR push 용).
+리포 Settings → Secrets and variables → Actions → **Variables**:
+
+| Variable | 값 |
+|---|---|
+| `DEPLOY_VERIFY_URL` | `deploy.yml` verify job 이 `/actuator/info`·`/actuator/health` 를 폴링할 주소. 테스트 중 `https://api-next.go-mmit.site`, 컷오버 후 `https://api.go-mmit.site` |
+
+Secrets 는 배포용으로 필요 없다 (`GITHUB_TOKEN` 이 GHCR push·재태깅에 자동 제공).
+옛 `AWS_DEPLOY_ROLE_ARN`, `EC2_INSTANCE_ID` 는 등록하지 않는다.
 
 GHCR 패키지는 **private 로 둔다.** 리포는 public 이지만 이미지에는 빌드 산출물·의존성이 들어가므로
 익명 pull 을 열지 않는다. EC2 에서 pull 하려면 자격증명이 필요하다:
@@ -71,6 +80,7 @@ GHCR 패키지는 **private 로 둔다.** 리포는 public 이지만 이미지�
 1. GitHub → Settings → Developer settings → Personal access tokens **(classic)** →
    Generate → `read:packages` **스코프만** 체크.
 2. 만료일: 설정하면 만료 전 재발급 + EC2 재로그인 필요 (아래 §2 에 갱신 메모). 무기한 토큰은 지양.
+   PAT 주인 계정이 org 패키지(`ghcr.io/prgrms-ildangback/...`)를 읽을 수 있는지 확인.
 3. 토큰 문자열을 1-4 의 `docker login` 단계에서 쓴다. `~ec2-user/.docker/config.json` 에 저장돼
    재부팅·재배포 후에도 유지된다.
 
@@ -82,7 +92,7 @@ sudo su - ec2-user
 cd /opt/team1-app
 
 # 리포 clone (private 이면 read-only deploy key 등록 후)
-git clone --depth 1 https://github.com/prgrms-be-devcourse/NBE10-12-final-ildangback.git src
+git clone --depth 1 https://github.com/prgrms-ildangback/NBE10-12-final-ildangback.git src
 
 # Origin CA 인증서 배치
 vi certs/origin.pem      # 1-1 에서 만든 인증서 본문
@@ -91,24 +101,23 @@ chmod 600 certs/origin.key
 
 # .env 작성 (템플릿: src/infra/compose/.env.example)
 cp src/infra/compose/.env.example .env
-vi .env                  # DB 비번, JWT_SECRET_KEY, Cloudinary, CORS 등
+vi .env                  # DB 비번, JWT_SECRET_KEY, Cloudinary, CORS 등. IMAGE_TAG=prod 그대로(최초 기동용)
 chmod 600 .env
 
-# GHCR 로그인 (패키지 private) — ec2-user 로 실행할 것. deploy.sh 도 ec2-user 로 돌기 때문.
+# GHCR 로그인 (패키지 private) — ec2-user 로 실행할 것. 폴러·deploy.sh 도 ec2-user 로 돌기 때문.
 # config.json 에 저장돼 재부팅·재배포 후에도 유지됨. 토큰은 1-3 의 read:packages PAT.
 echo <GHCR_PAT> | docker login ghcr.io -u <github-user> --password-stdin
 
 # 최초 기동
 cp src/infra/compose/docker-compose.yml .
 cp src/infra/compose/backup.sh .
-cp src/infra/compose/deploy.sh .          # 이후 SSM 배포가 절대경로로 호출. 이후엔 deploy.sh 가 스스로 갱신.
-chmod +x deploy.sh
+# 스크립트들은 이후 deploy.sh 가 매 배포마다 갱신.
+install -m 755 src/infra/compose/{deploy,deploy-poller,start-stack}.sh .
 rsync -a src/infra/nginx/ nginx/
 rsync -a src/infra/monitoring/ monitoring/
 
 # blue-green active 색 최초 지정(1회) — nginx 가 include 하는 upstream 정의라 이거 없으면
 # nginx 기동 자체가 실패함. 이후로는 deploy.sh 가 이 파일을 읽고/새로 씀(git 비추적).
-# infra/docs/blue-green-deploy-plan-*.md 참고.
 cat > nginx/conf.d/active-backend.conf <<'EOF'
 # deploy.sh 생성 파일 — git 비추적. 활성 backend 색 = 배포 상태 그 자체.
 upstream backend {
@@ -117,18 +126,21 @@ upstream backend {
 }
 EOF
 
-# 순서 기동(중요) — bare `docker compose up -d` 로 한 번에 올리지 않는다.
-# nginx 는 back-blue/back-green 에 대한 compose depends_on 이 없으므로(정적으로
-# "active 색"을 표현할 수 없어서 의도적으로 뺌), mysql → active 색(blue) → nginx
-# 순서로 직접 맞춰야 back-green 이 같이 뜨지 않고 nginx 도 콜드스타트 중에
-# proxying 을 시작하지 않는다.
-docker compose up -d mysql
-docker compose up -d --wait --wait-timeout 300 back-blue
-docker compose up -d nginx
+# 최초 기동 — systemd 유닛으로. start-stack.sh 가 mysql → active 색 → nginx → 모니터링 순으로 띄운다.
+# 유닛을 active 로 만들어 둬야 다음 재부팅 때 ExecStop(compose stop)이 돈다.
+exit                                   # ec2-user → 원래 사용자
+sudo systemctl start team1-app
+sudo -u ec2-user docker compose -f /opt/team1-app/docker-compose.yml ps
+```
 
-# 나머지(모니터링 등)는 순서 상관없어서 한 번에.
-docker compose up -d
-docker compose ps
+> bare `docker compose up -d` 는 쓰지 않는다 — back-blue/back-green 이 둘 다 뜬다.
+
+**폴러 확인** — user-data 가 timer 를 enable 해두었고, `deploy-poller.sh`·`.env` 가 생긴 순간부터 1분마다 돈다.
+첫 회차는 상태 파일이 없어 지금 `prod` 이미지로 blue/green 한 번 더 배포한다(같은 이미지, 무해).
+
+```bash
+systemctl list-timers team1-deploy-poller.timer
+journalctl -u team1-deploy-poller -n 50 --no-pager
 ```
 
 ### 1-5. Cloudflare Workers (프론트) — Pages 아님, 대시보드가 통합돼 신규 프로젝트는 기본 Workers
@@ -148,7 +160,8 @@ docker compose ps
 ### 1-6. 확인
 
 ```
-curl -I https://api.go-mmit.site/actuator/health   # 200
+curl -I https://api.go-mmit.site/actuator/health   # 200 (테스트 중엔 api-next)
+curl https://api.go-mmit.site/actuator/info        # {"app":{"revision":"<커밋 SHA>"}}
 open https://go-mmit.site                          # 프론트
 ```
 
@@ -156,31 +169,45 @@ open https://go-mmit.site                          # 프론트
 
 ## 2. 일상 배포
 
-`main` 에 백엔드/인프라 변경 머지 → `deploy.yml` 자동 실행:
-빌드 → GHCR push (`:<sha>` + `:latest`) → SSM 이 `deploy.sh <12자-sha> <풀-sha>` 실행 → 헬스체크.
-(2번째 인자로 배포 커밋에 `src` 를 고정 → 이미지와 compose/nginx 설정이 같은 커밋.)
+`main` 에 백엔드/인프라 변경 머지 → `deploy.yml`:
 
-수동 실행: Actions → Deploy Backend → Run workflow.
+1. **build** — 이미지 빌드 → GHCR `back:<12자-sha>` push. 커밋 SHA 가 이미지 레이블
+   (`org.opencontainers.image.revision`)과 앱 `/actuator/info` 의 `app.revision` 에 들어간다.
+2. **promote** — `production` 승인 대기 → 승인되면 `back:<sha>` 를 `back:prod` 로 재태깅.
+3. **EC2 폴러** (`team1-deploy-poller.timer`, 1분) — `prod` 이미지가 바뀐 걸 보고 레이블의 SHA 로
+   `deploy.sh <12자-sha> <풀-sha>` 실행 (blue/green, `src` 를 그 커밋에 고정 → 이미지와 compose/nginx 설정이 같은 커밋).
+4. **verify** — `DEPLOY_VERIFY_URL` 의 `/actuator/info` revision 이 커밋 SHA 이고 health 가 UP 이 될 때까지 최대 10분 폴링.
 
-**배포 금지 시간대**: 03:30~04:30 (자동 start + 배치), 17:45~18:15 (루트 정지). 런북 상단 참고.
+수동 실행: Actions → Deploy Backend → Run workflow (브랜치 선택, `rollback_sha` 비움).
 
-**GHCR PAT 갱신**: 1-3 에서 만료일 있는 PAT 를 썼다면 만료 전에 새 토큰 발급 → EC2 에서
-`docker login` 다시 (1-4 명령 동일). 만료되면 `deploy.sh` 의 `docker compose pull` 이
-`denied` / `unauthorized` 로 실패한다.
+**배포 금지 시간대**: 04:00~04:30 (정산 배치 + 04:20 mysqldump).
+
+**verify 가 타임아웃되면** — EC2 에서 `journalctl -u team1-deploy-poller -n 100`:
+- `pull 실패` → GHCR PAT 만료/권한. 아래 PAT 갱신 후엔 다음 회차에 저절로 진행된다.
+- `git fetch 실패` / `이미지 pull 실패`(deploy.sh) → 일시적 실패. 폴러가 다음 회차에 자동 재시도.
+- `UNHEALTHY` / nginx 검증 실패 → 새 색이 안 떴고 active 색은 그대로 서빙 중. back 로그 확인(7장).
+  폴러는 같은 `prod` digest 를 2회까지만 시도한다 — 고쳐서 새 커밋을 배포하거나, 같은 SHA 를 `rollback_sha` 로 다시 승격.
+- `revision 레이블 없음` → 전환 전에 빌드된 옛 이미지를 승격함. 레이블 있는 SHA 로 다시.
+
+**GHCR PAT 갱신**: 만료일 있는 PAT 를 썼다면 만료 전에 새 토큰 발급 → EC2 에서 ec2-user 로
+`docker login` 다시 (1-4 명령 동일). 만료되면 폴러의 `docker pull` 이 `denied` / `unauthorized` 로 실패하고,
+CI 에는 verify 타임아웃으로만 드러난다.
 
 ---
 
 ## 3. 롤백
 
-```bash
-aws ssm start-session --target <instance-id>
-# 1번째 = 이미지 태그(12자), 2번째 = 같은 커밋의 풀 SHA (src 를 그 커밋으로 되돌림)
-sudo -u ec2-user bash /opt/team1-app/deploy.sh <이전-12자-SHA> <이전-풀-SHA>
-```
+Actions → Deploy Backend → Run workflow → `rollback_sha` 에 **되돌아갈 커밋의 풀 SHA(40자)**.
+빌드 없이 그 이미지를 승인 후 `prod` 로 승격 → 폴러가 이미지와 설정(`src`)을 그 커밋으로 되돌린다.
+EC2 접속 불필요.
 
-이전 이미지는 GHCR 에 `back:<sha>` 로 남아 있다. GHCR Packages 에서 태그 목록 확인.
-`deploy.sh` 가 `docker image prune` 로 72시간 지난 이미지를 지우므로, 3일보다 오래된
-버전으로 롤백하려면 GHCR 에서 다시 pull 된다(자동). 문제 없음.
+- 이전 이미지는 GHCR 에 `back:<12자-sha>` 로 남아 있다 (GHCR Packages 에서 태그 확인).
+- 대상은 이 Deploy Backend 워크플로가 빌드한 커밋이어야 한다(revision 레이블·`/actuator/info` 필요).
+  GHCR 에 태그가 없는 SHA 면 `Retag to prod` 가 not found 로 실패하고 `prod` 는 그대로다.
+- EC2 의 `docker image prune` 은 24시간 지난 미사용 이미지를 지운다 — 더 오래된 버전이면 자동으로 다시 pull.
+
+비상시(GitHub 장애 등) 수동: SSM 세션에서 `sudo -u ec2-user bash /opt/team1-app/deploy.sh <12자-SHA> <풀-SHA>`.
+단 `prod` 태그는 그대로라 폴러와 어긋나지 않도록, GitHub 복구 후 같은 SHA 로 롤백 dispatch 를 한 번 해 둔다.
 
 ---
 
@@ -191,6 +218,8 @@ sudo -u ec2-user bash /opt/team1-app/deploy.sh <이전-12자-SHA> <이전-풀-SH
   필요 시 EC2 콘솔에서 루트 볼륨 스냅샷을 수동으로 찍을 수 있다.
 
 ### 논리 복구 (mysqldump 에서)
+
+복원 중엔 배포를 멈춘다: `touch /opt/team1-app/.deploy-paused` (끝나면 `rm`).
 
 ```bash
 cd /opt/team1-app
@@ -213,29 +242,23 @@ docker compose restart "$ACTIVE"
 
 ---
 
-## 5. 인스턴스 정지/기동
+## 5. 가동 / 재부팅
 
-- **정지**: 매일 18:00 루트 계정 (우리가 막을 수 없음).
-- **기동**: 매일 03:30 EventBridge Scheduler (`team1-ec2-start-0330`). 이미 running 이면 무시.
-- **수동 기동**: `aws ec2 start-instances --instance-ids <id> --region ap-northeast-2`
-- 기동 후 컨테이너는 `systemd team1-app.service` + `restart: unless-stopped` 로 자동 복귀.
-  안 뜨면: `sudo systemctl start team1-app`. 그래도 안 되면 수동 기동하되 **bare `docker
-  compose up -d` 금지** — active 아닌 색(back-blue/back-green 중 하나)까지 같이 떠서
-  "평상시 한쪽만 running" 이 깨진다. active 색 확인 후 그 색만 지정:
-  ```bash
-  cd /opt/team1-app
-  grep back nginx/conf.d/active-backend.conf   # 예: back-blue
-  docker compose up -d mysql
-  docker compose up -d --wait --wait-timeout 300 back-blue   # 위에서 확인한 색으로 교체
-  docker compose up -d nginx
-  ```
+- **24시간 가동.** 정지 스케줄 없음(옛 계정의 03:30 자동 기동 Scheduler 는 삭제).
+- **자동 재부팅**: CloudWatch 알람 `team1-app-instance-check-reboot` — 인스턴스 상태 검사
+  (`StatusCheckFailed_Instance`) 3분 연속 실패(메모리 고갈 등 OS 무응답) 시 EC2 reboot.
+- **수동 기동**(누가 stop 했을 때): `aws ec2 start-instances --instance-ids <id> --region ap-northeast-2`
+- 재부팅/기동 후 `team1-app.service`(`start-stack.sh`)가 active 색만 띄우고, 폴러는
+  `team1-deploy-poller.timer` 로 자동 복귀. 종료 시에는 `docker compose stop`(컨테이너 유지).
+  안 뜨면: `journalctl -u team1-app` 확인 후 `sudo systemctl restart team1-app`.
+  **bare `docker compose up -d` 금지** — 비활성 색까지 같이 뜬다.
 - EIP 덕분에 정지/기동 후에도 공인 IP 는 그대로 → DNS 수정 불필요.
 
 ---
 
 ## 6. 셸 접속 / 로그
 
-**기본 경로 (SSM) — IAM 자격증명이 있는 사람 (인프라 담당자·CI):**
+**기본 경로 (SSM) — IAM 자격증명이 있는 사람 (인프라 담당자):**
 
 ```bash
 aws ssm start-session --target <instance-id> --region ap-northeast-2
@@ -246,7 +269,8 @@ docker compose ps
 grep back nginx/conf.d/active-backend.conf
 docker compose logs -f --tail=100 back-blue    # 또는 back-green, 위에서 확인한 쪽
 docker compose logs --tail=50 nginx
-docker stats --no-stream          # 메모리 압박 확인 (2GB 박스)
+journalctl -u team1-deploy-poller -n 50 --no-pager   # 배포 폴러
+docker stats --no-stream          # 메모리 압박 확인 (4GB 박스)
 free -h; swapon --show
 ```
 
@@ -272,7 +296,6 @@ IAM 을 나눠줄 수 없어 SSM 을 못 쓰는 운영자 1인 전용. 그 외�
    ```
 
 **접속 (그 사람이):** `ssh -i ~/.ssh/team1 ec2-user@<EIP>`
-인스턴스가 켜진 03:30~18:00 에만 된다.
 
 **IP 가 바뀌면:** `terraform.tfvars` 의 `/32` 갱신 → `terraform apply`. 키는 그대로.
 
@@ -290,8 +313,10 @@ IAM 을 나눠줄 수 없어 SSM 을 못 쓰는 운영자 1인 전용. 그 외�
 | 502 from Cloudflare | nginx up? `certs/origin.*` 존재? `docker compose logs nginx` |
 | 526 (invalid SSL) from Cloudflare | Origin CA 인증서 만료/불일치, SSL 모드 Full(strict) 확인 |
 | ffmpeg 중 앱 느려짐 | 정상 (동시성 1, swap 사용). 지속되면 인코딩을 새벽으로 이동 |
-| 4시 배치 안 돎 | 인스턴스가 03:30 에 켜졌나? Scheduler 로그, `journalctl -u ...` |
-| SSM 명령 안 감 | 인스턴스 running? SSM 에이전트? IAM 역할(`team1-app-role`) 붙었나 |
+| 4시 배치 안 돎 | 인스턴스 running? 그 시각 재부팅 있었나(CloudWatch 알람 이력)? back 로그 |
+| verify 타임아웃 (배포 안 됨) | 2장 "verify 가 타임아웃되면" — `journalctl -u team1-deploy-poller` |
+| 폴러가 아예 안 돎 | `systemctl list-timers` 에 `team1-deploy-poller.timer` 있나? `/opt/team1-app/deploy-poller.sh`·`.env` 있나(ConditionPathExists)? `team1-app` active·`.deploy-paused` 없음? |
+| SSM 세션 안 열림 | 인스턴스 running? SSM 에이전트? IAM 역할(`team1-app-role`) 붙었나 |
 
 ---
 

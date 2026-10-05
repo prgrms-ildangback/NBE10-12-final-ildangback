@@ -5,8 +5,8 @@
 인증은 미리 찍어둔 파일이 아닌 그 자리에서 촬영한 짧은 클립으로만 가능하고, 쌓인 포인트로 캐릭터와 그룹 공간을 꾸밀 수 있습니다. 한 달이 지나면 월간 머지, 챌린지가 끝나면 최종 머지가 영수증처럼 발행되어
 노력의 흔적이 기록으로 남습니다.
 
-[![backend-ci](https://github.com/prgrms-be-devcourse/NBE10-12-final-ildangback/actions/workflows/backend-ci.yml/badge.svg?branch=main)](https://github.com/prgrms-be-devcourse/NBE10-12-final-ildangback/actions/workflows/backend-ci.yml)
-[![frontend-ci](https://github.com/prgrms-be-devcourse/NBE10-12-final-ildangback/actions/workflows/frontend-ci.yml/badge.svg?branch=main)](https://github.com/prgrms-be-devcourse/NBE10-12-final-ildangback/actions/workflows/frontend-ci.yml)
+[![backend-ci](https://github.com/prgrms-ildangback/NBE10-12-final-ildangback/actions/workflows/backend-ci.yml/badge.svg?branch=main)](https://github.com/prgrms-ildangback/NBE10-12-final-ildangback/actions/workflows/backend-ci.yml)
+[![frontend-ci](https://github.com/prgrms-ildangback/NBE10-12-final-ildangback/actions/workflows/frontend-ci.yml/badge.svg?branch=main)](https://github.com/prgrms-ildangback/NBE10-12-final-ildangback/actions/workflows/frontend-ci.yml)
 
 **배포 링크**: https://go-mmit.site<br>
 **프로젝트 기간**: 2026-08-20 ~ 2026-09-15
@@ -94,7 +94,7 @@
 | API 문서 (Swagger) | http://localhost:8080/swagger-ui.html |
 | H2 콘솔            | http://localhost:8080/h2-console      |
 
-배포 환경에서는 `/swagger-ui`를 외부에 열지 않습니다. 실사용자에게 서비스되는 프로덕션이라 전체 API 명세와 관리자 엔드포인트(`/api/admin/**`)까지 그대로 공개하지 않으려는 의도적인 선택입니다. nginx가 `/api`, `/ws`, `/actuator/health`만 백엔드로 프록시하고 나머지 경로는 404로 막습니다. API 문서는 로컬에서 실행한 뒤 위 Swagger 주소로 확인합니다.
+배포 환경에서는 `/swagger-ui`를 외부에 열지 않습니다. 실사용자에게 서비스되는 프로덕션이라 전체 API 명세와 관리자 엔드포인트(`/api/admin/**`)까지 그대로 공개하지 않으려는 의도적인 선택입니다. nginx가 `/api`, `/ws`, `/actuator/health`, `/actuator/info`(배포 커밋 확인용)만 백엔드로 프록시하고 나머지 경로는 404로 막습니다. API 문서는 로컬에서 실행한 뒤 위 Swagger 주소로 확인합니다.
 
 ### 테스트
 
@@ -249,7 +249,7 @@ Checkstyle은 자동 수정 기능이 없어 네이밍·복잡도 같은 위반�
 
 ## 아키텍처
 
-프론트는 Cloudflare Workers에 정적 자산으로 배포되고, 백엔드/DB/모니터링은 EC2 한 대 위에서 Docker Compose로 함께 돕니다. nginx는 `/api`, `/ws`, `/actuator/health`만 백엔드로 프록시하고 나머지는 막습니다. 배포는 GitHub Actions가 이미지를 빌드해 GHCR에 올리고, EC2에서 blue/green 컨테이너를 번갈아 띄워 무중단으로 전환합니다.
+프론트는 Cloudflare Workers에 정적 자산으로 배포되고, 백엔드/DB/모니터링은 EC2 한 대 위에서 Docker Compose로 함께 돕니다. nginx는 `/api`, `/ws`, `/actuator/health`, `/actuator/info`만 백엔드로 프록시하고 나머지는 막습니다. 배포는 GitHub Actions가 이미지를 빌드해 GHCR에 올리고 승인을 거쳐 `prod` 태그로 승격하면, EC2의 폴러가 이를 감지해 blue/green 컨테이너를 번갈아 띄워 무중단으로 전환합니다. GitHub에는 AWS 자격증명을 두지 않습니다.
 
 ![아키텍처](docs/architecture.png)
 

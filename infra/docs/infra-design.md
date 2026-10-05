@@ -41,6 +41,7 @@
 - **시크릿**: DB 비밀번호 등 절대 커밋 금지. 일반 보안사항 준수
 - **OS 이미지**: Amazon Linux / Ubuntu / RHEL / Debian 만. mac / Windows / SUSE 금지
 - **매일 18:00 인스턴스 정지**: 루트 계정이 stop. 우리는 IAM 사용자라 막을 수 없음
+  (옛 계정 기준. 새 계정 이전 후 24시간 가동 — Q30)
 - **서빙 기간**: 최소 1개월, 최대 12개월 (도메인 비용 포함)
 
 ---
@@ -208,12 +209,12 @@ monorepo 안 `infra/` 디렉터리. `feat/infra-idk` → 다른 브랜치 머지
 | 보안그룹 | 443 = Cloudflare IP 대역만, 22 = 기본 미개방(배포·디버그 = SSM), `var.ssh_allowed_cidrs` 로 운영자 1인 `/32` 예외만 (Q14) | 오리진 우회 차단 |
 
 **Terraform 관리 대상**: VPC(1) / IGW / 퍼블릭 서브넷(1) / 라우트테이블 / EC2 / EIP /
-보안그룹 / IAM 역할(SSM) / cloudflare DNS 레코드 / EventBridge Scheduler(03:30
-start). provider 블록에 `default_tags { tags = { Team = "devcos-team01" } }`
+보안그룹 / IAM 역할(SSM) / cloudflare DNS 레코드 / CloudWatch 재부팅 알람(Q30, 옛 03:30
+start Scheduler 대체). provider 블록에 `default_tags { tags = { Team = "devcos-team01" } }`
 → 모든 AWS 리소스에 태그 자동. (key pair 미사용 — SSM 이 기본. SSH 예외 1인은 authorized_keys 직접 등록, Q14 추가결정)
 
 **예산 개산**: `t3a.medium` 24시간 ≈ 월 $24, gp3 30GB ≈ $2.4, EIP ≈ $3.6, 아웃바운드 전송
-100GB/월 무료. 18:00 정지로 가동시간이 절반이면 컴퓨트도 절반. 8만원(≈ $57) 안에 충분.
+100GB/월 무료. 24시간 가동(Q30)이라 합계 ≈ $30. 8만원(≈ $57) 안에 충분.
 
 ### Q4 — Terraform state → 3안 비교 (결론은 4c Q22 = B)
 
@@ -328,19 +329,21 @@ DB에 있고, 이게 날아가면 서비스가 끝난다. 데모/평가 중에 �
   `docker compose pull && docker compose up -d` → `/actuator/health` 확인.
 - Flyway는 앱 부팅 시 자동 마이그레이션 (별도 배포 스텝 없음).
 - 배포 채널: SSH 대신 **AWS SSM `send-command`** 권장 (포트 22를 안 열어도 됨). 라운드 2 확정.
+- **→ Q30 에서 대체**: Pull 배포(EC2 폴러가 GHCR `prod` 감시). SSM 은 운영자 셸 접속용으로만 남음.
 
 ### Q10 — 시크릿 관리 → 확정
 
 - **`/opt/team1-app/.env` 가 소스. 최초 1회 수동 배치**(`chmod 600`, 템플릿 `infra/compose/.env.example`,
   절차 runbook 1-4). compose `env_file` 로 주입. SSM Parameter Store는 이 규모에 오버킬.
 - **배포(`deploy.sh`)는 `.env` 를 렌더하지 않는다** — `IMAGE_TAG` 한 줄만 갱신한다. 시크릿 값
-  변경·회전은 SSM 셸로 `.env` 를 직접 고친 뒤 `docker compose up -d`.
+  변경·회전은 SSM 셸로 `.env` 를 직접 고친 뒤 `docker compose up -d <active 색>`(bare `up -d` 는 두 색을 다 띄움).
   (GitHub Actions 로 렌더하려면 전체 `.env` 를 Actions Secret 하나에 넣고 배포 스텝에서 써야 하는데,
   현재는 그 복잡도를 안 지고 수동 배치로 간다.)
-- 항목 목록은 `infra/compose/.env.example` 이 단일 출처. GitHub Actions Secrets 에는 배포에 필요한
-  `EC2_INSTANCE_ID` / `AWS_DEPLOY_ROLE_ARN` 만 둔다(앱 시크릿 아님).
+- 항목 목록은 `infra/compose/.env.example` 이 단일 출처. 배포용 GitHub Secrets 는 없다(Q30, `GITHUB_TOKEN` 만).
 
 ### Q11 — 스케줄러(새벽 4시) + 18:00 정지
+
+> 18:00 정지는 옛 계정 기준. 새 계정은 24시간 가동(Q30) — 아래 자동 복귀·멱등 job 은 재부팅 대비로 유효.
 
 **"Spring Batch deps가 뭐야?"**
 
@@ -412,6 +415,7 @@ DB에 있고, 이게 날아가면 서비스가 끝난다. 데모/평가 중에 �
   `aws ssm send-command`.
 - **결정: SSM.** 22번 포트를 아예 안 연다. 사람이 디버그로 접속할 때도 SSM Session Manager
   (브라우저/CLI 셸, 포트 불필요).
+- **→ Q30**: 배포는 Pull 로 바뀌어 Actions 의 SSM 호출은 삭제. SSM 은 셸 접속용만.
 
 **(2) 443 포트(HTTPS)를 누구에게 여나?**
 
@@ -432,12 +436,12 @@ DB에 있고, 이게 날아가면 서비스가 끝난다. 데모/평가 중에 �
   - 공유 IAM 사용자에 SSM 권한 부여 → 계정이 IAM 편집을 막아 불가.
 - **결정: 그 1인의 공인 IP `/32` 에만 22 를 연다.** `var.ssh_allowed_cidrs` (기본 `[]` =
   미개방). 키는 `ec2-user` `authorized_keys` 에 그 사람 공개키 1개만. SSM 경로는 그대로 유지
-  (담당자·CI 는 계속 SSM).
+  (담당자는 계속 SSM).
 - 잔여 리스크와 완화:
   - 22 는 Cloudflare 뒤가 아니라 **오리진 직접 노출** → `/32` 로만, `0.0.0.0/0` 은 변수
     validation + `tftest` 가 차단.
   - 비밀번호 로그인은 AL2023 기본값이 off, 키 인증만.
-  - 노출창은 인스턴스가 켜진 03:30~18:00 뿐(루트 계정이 18:00 stop).
+  - 노출창은 인스턴스가 켜진 03:30~18:00 뿐(루트 계정이 18:00 stop). 새 계정은 24시간(Q30)이라 `/32` 가 유일한 제한.
   - 키가 1개라 접속 주체가 특정된다. 필요 시 `fail2ban` 추가.
   - IP 변동 시 `terraform.tfvars` 갱신 후 `apply` — SG 규칙만 라이브 교체, 무중단.
 - `tftest`: `security_group_locks_origin` 은 "기본값이면 22 규칙 0개", `ssh_exception_is_narrow`
@@ -504,6 +508,7 @@ DB에 있고, 이게 날아가면 서비스가 끝난다. 데모/평가 중에 �
   18:00에 한다.
 - "이미 켜져 있는데 또 켜는 건?" → `StartInstances` 는 이미 running이면 **no-op**(에러 아님).
   안전하다.
+- **→ Q30 에서 폐기**: 새 계정은 24시간 가동. `schedule.tf`·scheduler 역할 삭제, 대신 상태 검사 실패 시 자동 재부팅 알람.
 
 ### Q20 — 도메인
 
@@ -534,6 +539,7 @@ DB에 있고, 이게 날아가면 서비스가 끝난다. 데모/평가 중에 �
   빌드해야 한다(느림).
 - **결정: (a).** 배포 워크플로가 자동으로 해시 태그 + `.env` 갱신. 런북에 "롤백 = `.env`
   한 줄 바꾸고 `up -d`" 를 적는다. (`latest` 태그도 같이 push해서 편의용으로 둔다.)
+- **→ Q30 에서 조정**: SHA 태그는 유지, `latest` 폐지. 롤백 = 이전 SHA 를 `workflow_dispatch` 로 `prod` 재승격.
 
 ---
 
@@ -680,6 +686,7 @@ ffmpeg가 `back` 컨테이너 안에서 JVM과 메모리를 공유하는 게 유
 
 `management.endpoints.web.exposure.include=health` 만. `/actuator/health` permitAll, 나머지는
 아예 노출 안 함. 나중 모니터링 붙일 때 `prometheus` 추가 + `/actuator/**` 인증.
+(이후 Q29 에서 `prometheus`, Q30 에서 `info`(배포 revision 확인용, `info.*` 만) 추가.)
 
 ### Q27 — 비공개 미디어 인증 → MVP는 Bearer + fetch-blob (쿠키/SameSite는 나중)
 
@@ -703,6 +710,7 @@ ffmpeg가 `back` 컨테이너 안에서 JVM과 메모리를 공유하는 게 유
 Cloudflare Workers Git 연동(Workers Builds)으로 자체 처리하려 했으나 연동 끊겨
 `deploy-front.yml`(GitHub Actions, `wrangler deploy`)로 대체. CI(`backend-ci.yml`) 통과가 선행조건이 되도록
 `workflow_run` 연동 또는 deploy job 내에서 테스트 재실행.
+**→ Q30**: 트리거는 같되 운영 반영은 `production` 승인(promote job) 뒤에만.
 
 ### Q29 — 모니터링 도입: Prometheus + Loki + Grafana 자체호스팅 (2026-09-11, `feat/72-infra-monitoring`)
 
@@ -748,6 +756,35 @@ Q16 "지금은 (a) 엔드포인트만" 재오픈. **결정: Prometheus+Loki+Graf
     `management.metrics.tags.application: ${spring.application.name}` 설정이 있어야 함(없으면
     변수가 비어서 패널이 전부 빈 화면) — `application.yml`의 `management.metrics.tags`에 이미 추가됨.
 
+### Q30 — Pull 배포 전환 + 새 계정 24시간 가동 (2026-10-05, `feat/1-infra-change`)
+
+리포(`prgrms-ildangback/NBE10-12-final-ildangback`)·AWS 계정 이전에 맞춰 배포를 Push(Actions → OIDC →
+SSM `deploy.sh`)에서 Pull 로 바꾼다. **GitHub 에 AWS 자격증명(OIDC 신뢰 포함)을 두지 않는다.**
+
+```
+build (main push / dispatch)          promote (production 승인)          EC2 (1분 timer)
+  back:<sha12> push            →        back:<sha12> → back:prod     →    deploy-poller.sh
+  LABEL revision=<sha>                  (imagetools create, 재태깅)        prod 이미지 바뀜? → 레이블 SHA 로
+  ENV GIT_SHA → /actuator/info                                             deploy.sh <sha12> <sha> (blue/green)
+                                        verify: /actuator/info revision == sha && health UP (최대 10분)
+```
+
+| 항목 | 결정 | 이유 |
+|---|---|---|
+| 폴러 | systemd service + timer(1분). `prod` manifest digest 가 바뀌면(promote 가 승격마다 annotation 으로 digest 변경 — 같은 SHA 재승격도 재배포) `org.opencontainers.image.revision` 레이블로 기존 `deploy.sh` 호출 | blue/green·nginx 전환·롤백 로직 재사용. Watchtower 는 컨테이너를 제자리 교체해 blue/green 을 깨뜨림 |
+| 폴러 스크립트 위치 | 리포 `infra/compose/deploy-poller.sh`, deploy.sh 가 자기 자신처럼 동기화. user-data 는 유닛 설치·enable 만(`ConditionPathExists`) | `user_data_replace_on_change=false` 라 user-data 에 로직을 두면 수정 = 인스턴스 재생성 |
+| SHA 레이블 | 배포 계약 — 폴러가 deploy.sh 에 넘길 git ref. infra 경로 변경도 이미지 재빌드라 설정 변경도 따라옴 | deploy.sh 가 그 커밋으로 nginx/compose/monitoring 동기화 |
+| 태그 | build 는 `<sha12>` 만. `production` environment(필수 리뷰어) promote job 이 `prod` 로 재태깅. 롤백 = dispatch 로 이전 SHA 승격 | main push 즉시 무승인 배포 방지, 롤백에 EC2 접속 불필요 |
+| 실패 처리 | 일시적 실패(폴러 pull, deploy.sh 의 fetch/pull — 종료 코드 75)는 다음 회차 자동 재시도. unhealthy·nginx 실패는 같은 digest 2회까지(재승격하면 다시). `.deploy-paused` 파일이 있으면 배포 중단. `.env` `IMAGE_TAG` 는 전환 성공 후에만 기록 | PAT·네트워크 복구 시 자동 진행 / blue/green 재기동 루프 방지 / 실패 태그가 재부팅 때 active 색을 덮지 않게 |
+| 재부팅 복귀 | `team1-app.service` = `start-stack.sh`(active 색만, `--no-recreate`), 종료는 `compose stop` | 기존 `down` + bare `up -d` 는 재부팅마다 두 색을 모두 띄움 |
+| 반영 확인 | `info.app.revision=${GIT_SHA}` 를 `/actuator/info` 로(SecurityConfig permitAll + nginx `= /actuator/info`). CI 가 `vars.DEPLOY_VERIFY_URL` 로 폴링 | 트래픽 경로를 거쳐 실제 응답 프로세스가 새 SHA 임을 증명. git-properties 플러그인은 빌드 컨텍스트 `./back` 에 `.git` 이 없어 불가 |
+| PAT 만료 감지 | 폴러 실패는 journald 에만 → CI verify 타임아웃 메시지가 `journalctl -u team1-deploy-poller` 와 PAT 만료를 안내 | 원인까지 CI 로 올리는 건 범위 밖 |
+| SSM | GitHub→AWS 경로만 삭제(OIDC data, deploy role/policy, `id-token: write`, 관련 secret·변수·output·tftest). 인스턴스 `AmazonSSMManagedInstanceCore` 유지 | 운영자 Session Manager 접속 |
+| 가동 | 24시간. `schedule.tf`·scheduler 역할 삭제. `StatusCheckFailed_Instance` 3분 → EC2 reboot 알람 | 4GB 에 blue/green 동시 기동 + MySQL + 모니터링으로 OS 무응답 가능. 재부팅 후 `team1-app.service` + `unless-stopped` + 폴러 timer 로 복귀 |
+| DNS 레코드 이름 | `api_subdomain`/`grafana_subdomain` 변수. 이전 테스트 중 `api-next` 만(grafana 빈 값 = 레코드 없음), 컷오버 때 `api`/`grafana`. nginx `server_name` 은 둘 다 | Origin CA 가 `*.go-mmit.site` 라 재발급 불필요. 옛 state 의 운영 레코드와 충돌 방지 |
+
+범위 밖: Discord 배포 알림, terraform 원격 backend.
+
 ---
 
 ## 5. 산출물 목록 — ✅ 작성 완료 (2026-09-04)
@@ -762,11 +799,11 @@ infra/
     variables.tf
     network.tf             # VPC / IGW / 퍼블릭 서브넷 1 / 라우트테이블
     security.tf            # SG: 443 = Cloudflare IPv4 대역만 (http 데이터소스), 22 = ssh_allowed_cidrs 예외만
-    iam.tf                 # ① EC2 SSM 역할 ② GitHub OIDC 배포 역할 ③ Scheduler
+    iam.tf                 # EC2 SSM 역할 (OIDC 배포 역할·Scheduler 역할은 Q30 에서 삭제)
     ec2.tf                 # AL2023 x86_64 AMI, t3a.medium, gp3 30GB, EIP
-    dns.tf                 # cloudflare_record: api A → EIP, proxied (apex는 Workers가 관리)
-    schedule.tf            # EventBridge Scheduler: 매일 03:30 KST ec2:StartInstances
-    outputs.tf             # instance_id, deploy_role_arn 등 (GitHub Secrets 로)
+    dns.tf                 # cloudflare_record: api A → EIP, proxied (apex는 Workers가 관리). 이름은 변수(Q30)
+    alarm.tf               # StatusCheckFailed_Instance → EC2 reboot (Q30, schedule.tf 대체)
+    outputs.tf             # instance_id, public_ip, fqdn, ssm 명령
     terraform.tfvars.example
     .gitignore             # *.tfstate*, terraform.tfvars
   docker/
@@ -774,20 +811,22 @@ infra/
   compose/
     docker-compose.yml     # nginx + back + mysql (mem_limit 프리셋, healthcheck, expose)
     .env.example
-    deploy.sh              # EC2 배포 스크립트 (git pull + sync + compose + health), 롤백도 이것
+    deploy.sh              # EC2 배포 스크립트 (git fetch + sync + blue/green + health)
+    deploy-poller.sh       # GHCR back:prod 감시 → deploy.sh 호출 (Q30, systemd timer 1분)
+    start-stack.sh         # 부팅 시 active 색만 기동 (Q30, team1-app.service)
     backup.sh             # 야간 mysqldump (호스트 cron 04:20)
   nginx/
     nginx.conf             # client_max_body_size 20m, real_ip(CF), auth 레이트리밋 존, gzip 생략
     conf.d/api.conf        # api.go-mmit.site: TLS, /api/media 버퍼링 off, /api/auth 레이트리밋
   bootstrap/
-    user-data.sh           # cloud-init: swap 2G, docker, compose plugin, SSM, cron, systemd 유닛
+    user-data.sh           # cloud-init: swap 2G, docker, compose plugin, SSM, cron, systemd 유닛(앱·폴러)
   terraform/tests/
-    infra.tftest.hcl       # mock_provider plan 어서션 5개 (자격증명·비용 없음) — 아래 참고
+    infra.tftest.hcl       # mock_provider plan 어서션 (자격증명·비용 없음) — 아래 참고
   terraform/.tflint.hcl
   docker/.hadolint.yaml
 
 .github/workflows/
-  deploy.yml               # build(amd64→GHCR) → deploy(OIDC→SSM send-command→deploy.sh)
+  deploy.yml               # build(amd64→GHCR <sha>) → promote(승인→prod 재태깅) → verify(/actuator/info revision) (Q30)
   infra-ci.yml             # fmt/validate/test 는 머지 차단, tflint/hadolint/shellcheck/actionlint 는 리포트만
 
 docs/
@@ -796,11 +835,11 @@ docs/
 
 back/  (인프라가 건드린 최소 변경)
   build.gradle                              # + spring-boot-starter-actuator, + micrometer-registry-prometheus(Q29)
-  src/.../global/security/SecurityConfig.java  # /actuator/health permitAll, /actuator/prometheus permitAll(Q29)
-  src/main/resources/application.yml         # management(health,prometheus — Q29), multipart 15/20MB
+  src/.../global/security/SecurityConfig.java  # /actuator/health·info permitAll(info=Q30), /actuator/prometheus permitAll(Q29)
+  src/main/resources/application.yml         # management(health,info,prometheus), info.app.revision=${GIT_SHA}(Q30), multipart 15/20MB
   src/main/resources/application-prod.yml    # + logging.structured.format.console: logstash (Q29)
   src/main/.../checkin/service/CheckInService.java  # 로그 5곳 fluent API 전환 (Q29)
-  src/test/.../global/security/ActuatorSecurityTest.java  # health/prometheus=200 무인증 / 그 외 actuator=401
+  src/test/.../global/security/ActuatorSecurityTest.java  # health/info/prometheus=200 무인증 / 그 외 actuator=401
 
 front/
   package.json / pnpm-lock.yaml   # + vite-plugin-pwa ^1.0.3 (설치 시 1.3.0)
@@ -840,10 +879,12 @@ infra/
 | 검사 | 막는 사고 |
 |---|---|
 | `tftest` security_group_locks_origin / ssh_exception_is_narrow | 443 에 0.0.0.0/0, 또는 SSH 예외가 `/32`·22 를 벗어나 넓게 열림 → 오리진 직접 노출, Cloudflare 우회 |
-| `tftest` instance_is_hardened_and_cheap | 인스턴스 타입 상향(결재·예산), IMDSv2 해제(SSRF→자격증명 탈취), 루트 볼륨 미암호화, `user_data_replace_on_change=true`(수정 시 .env/certs 유실), IAM 프로파일 분리(SSM 배포 불가) |
-| `tftest` auto_start_before_batch | 기동 크론이 03:30·Asia/Seoul 이 아님 → 04:00 정산 배치 누락 |
+| `tftest` instance_is_hardened_and_cheap | 인스턴스 타입 상향(결재·예산), IMDSv2 해제(SSRF→자격증명 탈취), 루트 볼륨 미암호화, `user_data_replace_on_change=true`(수정 시 .env/certs 유실), IAM 프로파일 분리(SSM 접속 불가) |
+| `tftest` hung_instance_auto_reboots (Q30) | 상태 검사 알람·reboot 액션 누락 → 24시간 가동 중 OS 무응답이 방치됨 |
 | `tftest` api_dns_is_proxied | `proxied=false` → 오리진 IP 노출 + SG(CF IP only)와 충돌해 접속 불가 |
+| `tftest` migration_test_records_only (Q30) | 이전 테스트 설정(`api-next`, grafana 없음)에서 운영 레코드를 만들어 옛 state 와 충돌 |
 | `ActuatorSecurityTest` healthIsPublic | `/actuator/health` permitAll 소실 → nginx·Docker·deploy 헬스체크 전부 실패, 배포 롤백 루프 |
+| `ActuatorSecurityTest` infoIsPublicWithRevision (Q30) | `/actuator/info` 노출·permitAll·`management.info.env` 소실 → deploy.yml verify 가 매번 타임아웃 |
 | `ActuatorSecurityTest` otherActuatorEndpointsAreNotPublic | `exposure.include=*` 또는 매처를 `/actuator/**` 로 확대 → env·beans·heapdump 무인증 공개 |
 | `ActuatorSecurityTest` prometheusIsPublic (Q29) | `/actuator/prometheus` permitAll 소실 → Prometheus scrape 401, 메트릭 공백 |
 | `terraform validate` | 존재하지 않는 속성·타입 오류가 `apply` 때 처음 터지는 것 |
@@ -862,7 +903,7 @@ infra/
 - **GHCR 패키지 visibility**: **private 유지**. 리포는 public이지만 이미지에는 빌드 산출물·의존성이
   담기므로 익명 pull을 열지 않는다. EC2는 `read:packages` PAT로 1회 `docker login` — runbook 1-3, 1-4.
 - **Cloudflare Origin CA 인증서**: 발급 후 EC2 `certs/` 에 배치 — runbook 1-1, 1-4.
-- **최초 배포**: runbook 1장 순서대로 (Terraform → Secrets → EC2 셋업 → Workers).
+- **최초 배포**: runbook 1장 순서대로 (Terraform → Environment/Variables → EC2 셋업 → Workers).
 - **SSH 예외 1인**: `ssh_allowed_cidrs` 에 그 사람 공인 IP `/32`, 공개키는 런북 "SSH 예외
   접속" 절차대로 등록. IP 바뀌면 tfvars 갱신 후 `apply`.
 
@@ -885,3 +926,6 @@ infra/
   이중 방어, 보존 7일 롤링, 앱 메트릭만, 알림 없음, `CheckInService` 구조화 로깅 전환 동시 적용.
   `ec2-instance-approval-request.md`·`aws-usage-summary.md` 등 실배포 과정 메모는 §6 이후 반영
   대상(아직 본문 미병합, 참고만).
+- 라운드 6 (2026-10-05, `feat/1-infra-change`): Q30. 리포·AWS 계정 이전에 맞춰 Pull 배포(GHCR `prod` 폴러)로
+  전환, GitHub→AWS OIDC 경로 삭제, `production` 승인 promote + `/actuator/info` revision 반영 확인,
+  24시간 가동 + 상태 검사 자동 재부팅, DNS 레코드 이름 변수화(`api-next` 테스트). `tftest` −2 +2.
