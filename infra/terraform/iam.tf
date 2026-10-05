@@ -1,10 +1,4 @@
-data "aws_caller_identity" "current" {}
-
-# =============================================================================
-# 1. EC2 인스턴스 역할 — SSM(Session Manager + RunCommand) 용
-#    없으면: SSM 이 안 되고, 22 포트도 안 열려 있어서 배포·셸 접속 경로가 0.
-# =============================================================================
-
+# EC2 인스턴스 역할 — SSM(Session Manager + RunCommand)
 resource "aws_iam_role" "app" {
   name = "${var.name_prefix}-app-role"
   assume_role_policy = jsonencode({
@@ -27,18 +21,10 @@ resource "aws_iam_instance_profile" "app" {
   role = aws_iam_role.app.name
 }
 
-# =============================================================================
-# 2. GitHub Actions OIDC — 배포 워크플로가 ssm:SendCommand 호출
-#    없으면: Actions 가 EC2 에 배포 명령을 못 보냄. 대안(장기 AWS 키를 Secret)은
-#    로테이션·유출 리스크가 커서 배제.
-# =============================================================================
-
-# 계정당 1개만 허용되는 싱글턴 자원. 이미 있는 걸 data 로만 조회한다.
-# 선행조건: 계정에 provider 가 없다면 누군가 먼저 한 번 만들어야 한다(수동 또는 다른 스택):
-#   aws iam create-open-id-connect-provider \
-#     --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
+# GitHub Actions OIDC — deploy.yml 이 ssm:SendCommand 로 배포
+resource "aws_iam_openid_connect_provider" "github" {
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
 }
 
 resource "aws_iam_role" "deploy" {
@@ -48,13 +34,9 @@ resource "aws_iam_role" "deploy" {
     Statement = [{
       Effect    = "Allow"
       Action    = "sts:AssumeRoleWithWebIdentity"
-      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
       Condition = {
-        # aud + sub 둘 다 일치해야 함.
-        #   - sub 를 이 리포의 특정 GitHub Environment 로 한정 → 아무 브랜치/태그/PR 워크플로가
-        #     이 역할을 못 씀. deploy.yml 의 deploy job 은 environment: ${var.deploy_environment} 로 돈다.
-        #   - repo:*:* 로 넓히면 리포 write 권한자가 임의 브랜치에 워크플로를 올려 ssm:SendCommand 실행 가능.
-        #   - 이 GitHub organization 설정에 맞게 StringLike 로 매칭.
+        # sub 를 특정 environment 로 한정 — 임의 브랜치/PR 의 역할 탈취 방지
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
@@ -76,61 +58,27 @@ resource "aws_iam_role_policy" "deploy" {
     Version = "2012-10-17"
     Statement = [
       {
-        # 우리 인스턴스 1대 + RunShellScript 문서로만 한정(최소권한).
-        # 넓히면 유출된 OIDC 로 계정 내 임의 인스턴스에 명령 실행 가능.
         Sid    = "SendCommand"
         Effect = "Allow"
         Action = "ssm:SendCommand"
         Resource = [
-          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.app.id}",
+          aws_instance.app.arn,
           "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
         ]
       },
       {
-        Sid    = "ReadResultAndState"
-        Effect = "Allow"
-        # DescribeInstanceInformation: 콜드스타트 시 SSM 에이전트 준비 상태(PingStatus) 확인용.
-        # resource-level 제약 불가라 Resource="*" 필수 — 이 statement 가 이미 그렇다.
+        Sid      = "ReadResultAndState"
+        Effect   = "Allow"
         Action   = ["ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances"]
         Resource = "*"
       },
       {
-        # 배포 시각에 인스턴스가 꺼져 있으면(18:00~03:30) 켜야 함.
+        # workflow_dispatch start_if_stopped=true 일 때만 사용
         Sid      = "StartForDeploy"
         Effect   = "Allow"
         Action   = "ec2:StartInstances"
-        Resource = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.app.id}"
+        Resource = aws_instance.app.arn
       },
     ]
-  })
-}
-
-# =============================================================================
-# 3. EventBridge Scheduler 역할 — 매일 03:30 KST 인스턴스 start
-#    없으면: 스케줄러가 StartInstances 호출 권한이 없어 04:00 배치 전에 안 켜짐.
-# =============================================================================
-
-resource "aws_iam_role" "scheduler" {
-  name = "${var.name_prefix}-scheduler-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRole"
-      Principal = { Service = "scheduler.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "scheduler" {
-  name = "${var.name_prefix}-scheduler-policy"
-  role = aws_iam_role.scheduler.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "ec2:StartInstances"
-      Resource = "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.app.id}"
-    }]
   })
 }

@@ -1,5 +1,4 @@
-# 계정 규칙: VPC 1개 + IGW 1개 + EIP 1개까지 결재 없이. NAT 게이트웨이는 문의 필요.
-# 그래서 프라이빗 서브넷/NAT 없이 퍼블릭 서브넷 1개만 둔다.
+# NAT 비용 회피: 프라이빗 서브넷 없이 퍼블릭 서브넷 1개만.
 
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr

@@ -4,6 +4,11 @@ variable "aws_region" {
   default     = "ap-northeast-2"
 }
 
+variable "aws_account_id" {
+  description = "배포 대상 AWS 계정 ID (워크로드 프로젝트 계정)"
+  type        = string
+}
+
 variable "availability_zone" {
   description = "단일 퍼블릭 서브넷을 둘 AZ"
   type        = string
@@ -11,7 +16,7 @@ variable "availability_zone" {
 }
 
 variable "name_prefix" {
-  description = "리소스 이름 접두사 (계정 규칙: team1-<컴포넌트>)"
+  description = "리소스 이름 접두사 (team1-<컴포넌트>)"
   type        = string
   default     = "team1"
 }
@@ -23,7 +28,7 @@ variable "team_tag" {
 }
 
 variable "instance_type" {
-  description = "EC2 타입. x86(t3a) 계열. small 은 즉시 허가, 그 이상은 결재 필요"
+  description = "EC2 타입. t3a 계열만 (tftest)"
   type        = string
   default     = "t3a.medium"
 }
@@ -31,7 +36,7 @@ variable "instance_type" {
 variable "root_volume_size" {
   description = "루트 EBS(gp3) 크기 GiB. MySQL named volume + 미디어 임시파일 포함"
   type        = number
-  default     = 30
+  default     = 20
 }
 
 variable "vpc_cidr" {
@@ -44,10 +49,7 @@ variable "public_subnet_cidr" {
   default = "10.0.1.0/24"
 }
 
-# ---- SSH (예외 접속 1인용, Q14 추가결정) -------------------------------------
-# 팀 AWS 계정이 IAM 을 나눠줄 수 없어 SSM 을 못 쓰는 운영자 1인에게만 22 를 연다.
-# 기본값 [] = 규칙 0개(= SSM 전용, 원래 설계). 값을 채우면 그 CIDR 에서만 22 허용.
-# 오리진 직접 노출이므로 반드시 /32 단위. 0.0.0.0/0 금지(tftest 가 차단).
+# ---- SSH 예외 (Q14 추가결정) ---------------------------------------------------
 variable "ssh_allowed_cidrs" {
   description = "SSH(22) 를 허용할 CIDR 목록. 운영자 공인 IP /32. 비우면 SSH 안 엶"
   type        = list(string)
@@ -71,7 +73,7 @@ variable "domain" {
 }
 
 variable "api_subdomain" {
-  description = "백엔드 서브도메인 (앞부분만). apex 는 Cloudflare Pages 가 대시보드에서 관리"
+  description = "백엔드 서브도메인 (앞부분만). 컷오버 전 테스트는 api-next"
   type        = string
   default     = "api"
 }
@@ -90,7 +92,7 @@ variable "cloudflare_api_token" {
 # ---- 모니터링 (Q29) ------------------------------------------------------------
 
 variable "grafana_subdomain" {
-  description = "Grafana 서브도메인 (앞부분만). apex/api 와 마찬가지로 Cloudflare 프록시 ON"
+  description = "Grafana 서브도메인 (앞부분만). 빈 문자열이면 레코드 미생성(컷오버 전)"
   type        = string
   default     = "grafana"
 }
@@ -100,11 +102,50 @@ variable "grafana_subdomain" {
 variable "github_repo" {
   description = "OIDC 신뢰 대상 리포지토리 (owner/name)"
   type        = string
-  default     = "prgrms-be-devcourse/NBE10-12-final-ildangback"
+  default     = "prgrms-ildangback/NBE10-12-final-ildangback"
 }
 
 variable "deploy_environment" {
   description = "deploy.yml 의 deploy job 이 도는 GitHub Environment 이름. OIDC sub 를 이 환경으로 한정한다."
   type        = string
   default     = "production"
+}
+
+# ---- Budget (크레딧 가드) ------------------------------------------------------
+
+variable "alert_emails" {
+  description = "Budget·알람 SNS 이메일 구독자"
+  type        = list(string)
+  validation {
+    condition     = length(var.alert_emails) > 0
+    error_message = "alert_emails 가 비면 Budget 정지·reboot 알림이 아무에게도 안 간다."
+  }
+}
+
+variable "budget_start" {
+  description = "크레딧 Budget 시작일 YYYY-MM-01 (계정 생성 월의 1일)"
+  type        = string
+  validation {
+    condition     = can(regex("^\\d{4}-\\d{2}-01$", var.budget_start))
+    error_message = "YYYY-MM-01 형식."
+  }
+}
+
+variable "budget_limit_usd" {
+  description = "크레딧 Budget 한도(USD). 예측 비용이 이 값을 넘으면 메일"
+  type        = number
+}
+
+variable "budget_alert_usd" {
+  description = "실제 누적 비용이 넘으면 메일을 보낼 금액(USD) 목록"
+  type        = list(number)
+}
+
+variable "budget_stop_usd" {
+  description = "누적 비용이 이 값(USD)을 넘으면 EC2 자동 stop"
+  type        = number
+  validation {
+    condition     = var.budget_stop_usd > 0 && var.budget_stop_usd < var.budget_limit_usd
+    error_message = "budget_stop_usd 는 0 초과, budget_limit_usd 미만. 정지 후에도 EBS/EIP 비용이 쌓인다."
+  }
 }

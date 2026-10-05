@@ -5,13 +5,15 @@
 # 각 run 블록은 "이 설정이 깨지면 무슨 사고가 나는가"를 error_message 에 적었다.
 
 mock_provider "aws" {
-  # 모의 apply 시 IAM 역할 ARN 이 유효한 형식이어야 scheduler 의 role_arn 검증을 통과.
+  # budget action execution_role_arn 형식 검증용
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock" }
   }
-  # GitHub OIDC provider 는 계정 싱글턴이라 data 로만 조회한다(iam.tf) — 실제 조회 대신 가짜 응답.
-  mock_data "aws_iam_openid_connect_provider" {
+  mock_resource "aws_iam_openid_connect_provider" {
     defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+  }
+  mock_resource "aws_sns_topic" {
+    defaults = { arn = "arn:aws:sns:ap-northeast-2:123456789012:mock" }
   }
 }
 mock_provider "cloudflare" {}
@@ -27,8 +29,14 @@ mock_provider "http" {
 }
 
 variables {
+  aws_account_id       = "123456789012"
   cloudflare_zone_id   = "test-zone-id"
   cloudflare_api_token = "test-token"
+  alert_emails         = ["test@example.com"]
+  budget_start         = "2026-09-01"
+  budget_limit_usd     = 100
+  budget_alert_usd     = [50, 80]
+  budget_stop_usd      = 95
 }
 
 # -----------------------------------------------------------------------------
@@ -83,32 +91,26 @@ run "ssh_exception_is_narrow" {
 run "instance_is_hardened_and_cheap" {
   command = plan
 
-  # 막는 사고: 누가 instance_type 을 m5.large 등으로 올림 → 결재 없이 생성 불가 + 예산 초과.
   assert {
     condition     = can(regex("^t3a[.]", aws_instance.app.instance_type))
-    error_message = "인스턴스 타입이 t3a(x86 버스터블) 계열이 아니다. medium 초과는 결재 필요, 월 8만원 예산도 위험 (design Q3)."
+    error_message = "인스턴스 타입이 t3a 계열이 아니다. x86 이미지 불일치·크레딧 조기 소진 (design Q3)."
   }
 
-  # 막는 사고: 누가 metadata_options 를 지움 → IMDSv1 허용 → SSRF 한 방으로 인스턴스 역할 크레덴셜 탈취.
   assert {
     condition     = aws_instance.app.metadata_options[0].http_tokens == "required"
     error_message = "IMDSv2 가 강제되지 않는다. SSRF 취약점 하나로 SSM 역할 자격증명이 유출될 수 있다."
   }
 
-  # 막는 사고: 누가 encrypted 를 뺌 → 루트 볼륨이 평문 → 유출 시 DB·미디어 임시파일 노출.
   assert {
     condition     = aws_instance.app.root_block_device[0].encrypted == true
     error_message = "루트 EBS 가 암호화되지 않는다. 볼륨 유출 시 평문."
   }
 
-  # 막는 사고: 누가 true 로 되돌림 → 부트스트랩 스크립트 한 줄만 고쳐도 인스턴스 재생성
-  #           → 수동 배치한 .env / Origin CA 인증서 / 리포 clone 전부 날아가고 서비스 다운.
   assert {
     condition     = aws_instance.app.user_data_replace_on_change == false
     error_message = "user_data_replace_on_change 가 true 다. bootstrap 수정이 인스턴스를 재생성해 .env/certs/src 를 유실시킨다 (runbook 1-4 재실행 필요)."
   }
 
-  # 막는 사고: 누가 iam_instance_profile 를 뗌 → SSM 에이전트가 등록 안 됨 → 배포·셸 접속 전부 불가.
   assert {
     condition     = aws_instance.app.iam_instance_profile != ""
     error_message = "인스턴스에 IAM 프로파일이 없다. SSM RunCommand/Session 이 안 되면 유일한 배포·접속 경로가 사라진다 (22 미개방)."
@@ -116,19 +118,42 @@ run "instance_is_hardened_and_cheap" {
 }
 
 # -----------------------------------------------------------------------------
-run "auto_start_before_batch" {
+run "credit_budget_stops_ec2" {
   command = plan
 
-  # 막는 사고: 크론이 밀리거나 지워짐 → 03:30 에 인스턴스가 안 켜짐 → 04:00 정산 배치(포인트·스트릭) 누락.
   assert {
-    condition     = aws_scheduler_schedule.ec2_start.schedule_expression == "cron(30 3 * * ? *)"
-    error_message = "자동 기동 크론이 03:30 이 아니다. 루트가 18:00 에 끈 인스턴스가 04:00 배치 전에 안 켜진다 (design Q19)."
+    condition     = aws_budgets_budget.credit.cost_types[0].include_credit == false
+    error_message = "Budget 이 크레딧 차감 후 비용을 본다. 크레딧 소진 전까지 $0 으로 보여 정지가 안 걸린다."
   }
 
-  # 막는 사고: 타임존이 빠지면 UTC 로 해석 → cron(30 3) = 12:30 KST 기동 → 배치 시간과 무관.
   assert {
-    condition     = aws_scheduler_schedule.ec2_start.schedule_expression_timezone == "Asia/Seoul"
-    error_message = "스케줄 타임존이 Asia/Seoul 이 아니다. UTC 로 해석되면 기동 시각이 9시간 어긋난다."
+    condition     = aws_budgets_budget.credit.time_unit == "ANNUALLY"
+    error_message = "Budget 이 연 누적이 아니다. 크레딧은 12개월 한 덩어리라 월 단위로는 소진을 못 잡는다."
+  }
+
+  assert {
+    condition = (
+      aws_budgets_budget_action.stop_ec2.approval_model == "AUTOMATIC" &&
+      aws_budgets_budget_action.stop_ec2.action_threshold[0].action_threshold_value < var.budget_limit_usd &&
+      aws_budgets_budget_action.stop_ec2.definition[0].ssm_action_definition[0].action_sub_type == "STOP_EC2_INSTANCES"
+    )
+    error_message = "EC2 자동 정지가 한도 미만·AUTOMATIC 이 아니다. 정지 후 EBS/EIP 비용까지 더하면 한도 초과."
+  }
+}
+
+# -----------------------------------------------------------------------------
+run "status_check_reboots_instance" {
+  command = plan
+
+  # 막는 사고: reboot 액션이 빠지거나 평가 기간이 늘어남 → OS 무응답이 방치돼 24시간 가동이 깨짐.
+  assert {
+    condition     = contains(aws_cloudwatch_metric_alarm.instance_reboot.alarm_actions, "arn:aws:automate:${var.aws_region}:ec2:reboot")
+    error_message = "StatusCheckFailed 알람에 ec2:reboot 액션이 없다. OS 무응답 시 자동 복구가 안 된다."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.instance_reboot.evaluation_periods * aws_cloudwatch_metric_alarm.instance_reboot.period <= 300
+    error_message = "reboot 까지 5분을 넘긴다. 무응답 시간이 그만큼 길어진다."
   }
 }
 

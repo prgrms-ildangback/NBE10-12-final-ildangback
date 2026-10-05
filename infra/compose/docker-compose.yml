@@ -99,7 +99,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=7d   # 루트 30GB 공유, 보수적으로 7일
+      - --storage.tsdb.retention.time=7d   # 루트 20GB 공유, 보수적으로 7일
       - --web.listen-address=0.0.0.0:9090
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro

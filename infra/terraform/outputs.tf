@@ -4,7 +4,7 @@ output "instance_id" {
 }
 
 output "public_ip" {
-  description = "탄력적 IP. Pages 도메인/네임서버와 무관, api 레코드가 자동으로 가리킴"
+  description = "탄력적 IP. api/grafana 레코드가 가리킴"
   value       = aws_eip.app.public_ip
 }
 
@@ -13,8 +13,7 @@ output "api_fqdn" {
 }
 
 output "grafana_fqdn" {
-  description = "nginx Basic Auth(1차) + Grafana 로그인(2차) 통과해야 열람 가능"
-  value       = "${var.grafana_subdomain}.${var.domain}"
+  value = var.grafana_subdomain == "" ? null : "${var.grafana_subdomain}.${var.domain}"
 }
 
 output "deploy_role_arn" {
@@ -22,9 +21,8 @@ output "deploy_role_arn" {
   value       = aws_iam_role.deploy.arn
 }
 
-output "ssm_start_command" {
-  description = "수동으로 인스턴스를 켤 때"
-  value       = "aws ec2 start-instances --instance-ids ${aws_instance.app.id} --region ${var.aws_region}"
+output "ec2_start_command" {
+  value = "aws ec2 start-instances --instance-ids ${aws_instance.app.id} --region ${var.aws_region}"
 }
 
 output "ssm_session_command" {
@@ -33,6 +31,6 @@ output "ssm_session_command" {
 }
 
 output "ssh_command" {
-  description = "SSM 을 못 쓰는 운영자 1인용. ssh_allowed_cidrs 를 채우고 런북대로 키 등록했을 때만 동작"
+  description = "SSH 예외용. ssh_allowed_cidrs + 키 등록(runbook 6-1) 시에만 동작"
   value       = length(var.ssh_allowed_cidrs) > 0 ? "ssh ec2-user@${aws_eip.app.public_ip}" : "(ssh_allowed_cidrs 비어있음 — SSH 미개방)"
 }
