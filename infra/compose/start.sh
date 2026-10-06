@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # EC2 /opt/team1-app/start.sh. 부팅(systemd team1-app)·수동 기동용.
 # bare `docker compose up -d` 는 비활성 색까지 띄우므로 활성 색만 기동한다.
+# `back-` 접두사는 blue/green 전용 — 다른 서비스에 쓰면 부팅 시 기동에서 빠진다.
 set -euo pipefail
 
 APP_DIR=/opt/team1-app
@@ -22,4 +23,9 @@ if ! docker compose up -d --wait --wait-timeout 300 "$ACTIVE"; then
 fi
 
 mapfile -t OTHERS < <(docker compose config --services | grep -v '^back-')
+# 빈 배열이면 bare `up -d` 가 되어 비활성 색까지 뜨므로 중단
+if (( ${#OTHERS[@]} == 0 )); then
+  echo "기동할 비-back 서비스 없음 — compose 구성 확인 필요" >&2
+  exit 1
+fi
 docker compose up -d "${OTHERS[@]}"
