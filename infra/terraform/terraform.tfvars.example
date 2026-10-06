@@ -1,22 +1,15 @@
 # cp terraform.tfvars.example terraform.tfvars 후 채운다. terraform.tfvars 는 커밋 금지.
 
+aws_account_id       = "123456789012"
 cloudflare_zone_id   = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 cloudflare_api_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-# 구매 후 실제 도메인으로 교체 (기본값 go-mmit.site 는 임시)
-# domain = "go-mmit.site"
+# 크레딧 Budget: 계정 생성 월 1일부터 12개월 누적
+alert_emails     = ["me@example.com"]
+budget_start     = "2026-09-01"
+budget_limit_usd = 100
+budget_alert_usd = [50, 80]
+budget_stop_usd  = 95
 
-# github_repo = "prgrms-be-devcourse/NBE10-12-final-ildangback"
-
-# deploy.yml 의 deploy job GitHub Environment 이름. OIDC sub 를 이 환경으로 한정한다.
-# 리포 Settings → Environments 에 같은 이름을 만들어야 함 (runbook 1-3).
+# GitHub Environment 이름과 일치해야 함 (runbook 1-3)
 # deploy_environment = "production"
-
-# small 이상은 결재 필요
-# instance_type = "t4g.small"
-
-# SSM 을 못 쓰는 운영자 1인에게만 SSH 를 여는 예외 (Q14 추가결정).
-# 비워두면 22 를 안 연다(권장). 열려면 그 사람 공인 IP 를 /32 로. 0.0.0.0/0 금지.
-# IP 가 바뀌면 이 값 갱신 후 terraform apply (SG 규칙만 라이브 교체, 무중단).
-# 공개키는 여기 아님 — 런북 "SSH 예외 접속" 절차대로 authorized_keys 에 넣는다.
-# ssh_allowed_cidrs = ["203.0.113.7/32"]

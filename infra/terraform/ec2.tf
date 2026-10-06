@@ -45,16 +45,30 @@ resource "aws_instance" "app" {
   tags = { Name = "${var.name_prefix}-app" }
 
   lifecycle {
-    # 매일 18:00 루트 계정이 stop → 아침 start. TF 가 상태 드리프트로 보지 않게.
+    # most_recent AMI 갱신으로 인한 재생성 방지
     ignore_changes = [ami]
   }
 }
 
-# 계정 규칙: EIP 1개 허용. stop/start 후에도 IP 유지 목적.
+# stop/start 후에도 IP 유지
 resource "aws_eip" "app" {
   domain   = "vpc"
   instance = aws_instance.app.id
   tags     = { Name = "${var.name_prefix}-eip" }
 
   depends_on = [aws_internet_gateway.main]
+}
+
+# OS 무응답(메모리 고갈 등) 5분 지속 시 reboot
+resource "aws_cloudwatch_metric_alarm" "instance_reboot" {
+  alarm_name          = "${var.name_prefix}-status-check-reboot"
+  namespace           = "AWS/EC2"
+  metric_name         = "StatusCheckFailed_Instance"
+  dimensions          = { InstanceId = aws_instance.app.id }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  alarm_actions       = ["arn:aws:automate:${var.aws_region}:ec2:reboot", aws_sns_topic.alerts.arn]
 }

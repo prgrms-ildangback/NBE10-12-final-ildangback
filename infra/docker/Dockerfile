@@ -43,7 +43,7 @@ RUN mkdir -p /app/media-tmp && chown -R gommit:gommit /app/media-tmp
 USER gommit
 EXPOSE 8080
 
-# -Xmx 등은 compose 의 JAVA_OPTS 로 주입(2GB 박스 프리셋). 없으면 컨테이너 비율 기반.
+# compose 의 JAVA_OPTS 가 덮어씀. 없으면 컨테이너 비율 기반.
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Seoul"
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
 
