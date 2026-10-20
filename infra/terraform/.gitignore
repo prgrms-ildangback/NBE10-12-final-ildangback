@@ -1,4 +1,3 @@
-# Q22 = C안: 로컬 state. 인프라 담당자 1인만 apply, apply 직후 팀 드라이브에 백업.
 *.tfstate
 *.tfstate.*
 .terraform/

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 야간 mysqldump — 7일 로컬 보관. 호스트 cron 이 04:20 KST 에 실행 (user-data.sh 등록).
-# DLM EBS 스냅샷과 별개의 논리 백업. 복구 절차는 infra/docs/infra-runbook.md.
+# 복구 절차는 infra/docs/infra-runbook.md §4.
 set -euo pipefail
 
 # cron 은 최소 PATH 로 실행 — docker 조회 실패 대비
